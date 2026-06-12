@@ -1,0 +1,76 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ─── Virtual environments ─────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ─── Jupyter ──────────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# ─── ML model weights (often hundreds of MB) ──────────────
+*.pt
+*.pth
+*.ckpt
+*.weights
+*.h5
+*.pkl
+*.joblib
+
+# ─── YOLO training output directories ─────────────────────
+runs/
+wandb/
+mlruns/
+
+# ─── Dataset image/label files (large, not tracked here) ──
+dataset/
+data/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tif
+*.tiff
+
+# ─── Environment / secrets ────────────────────────────────
+.env
+.env.local
+*.env
+secrets.json
+
+# ─── OS-generated files ───────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ─── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── Claude Code local settings ───────────────────────────
+.claude/
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+logs/
