@@ -17,8 +17,12 @@ The most important development metric is **Mask mAP50-95**, because this is a se
 | V8 | Controlled image-size-only experiment | YOLOv8s-seg | 896 | Only increase `imgsz` to 896; no oversampling or extra augmentation changes | 0.2260 | Worse than V6 |
 | V9 | Test larger model capacity | YOLOv8m-seg | 768 | Change model from YOLOv8s to YOLOv8m; keep `imgsz=768` | 0.2320 | Almost tied with V6, but not better |
 | V10 | Test mild rare Caries oversampling | YOLOv8s-seg | 768 | YOLOv8s-seg + imgsz=768 + mild rare Caries oversampling | 0.2341 | Marginally above V6 but within noise; recall improved, precision fell |
+| V11 | Plan D: decouple destructive aug + medical-grade copy-paste | YOLOv8s-seg | 768 | `mosaic=0`, `mixup=0`, `copy_paste=0.2` | 0.2135 | **Clear regression (−0.020)**; disabling mosaic accelerated overfitting |
+| V12 | Attack small-object bottleneck at the architecture level | YOLOv8s-seg + P2 head | 768 | Add stride-4 (P2) segment head; aug reverted to clean V6 baseline | 0.2215* | **Did not beat baseline (≈−0.013)**; recall did not improve, so P2 caught no extra small lesions |
 
-Current best practical baseline (V10 is technically highest but improvement over V6 is negligible):
+\* V12's 0.2215 is a single-epoch spike at ep32; the sustained level is ~0.21, i.e. ≈−0.02 vs the V6/V10 baseline.
+
+Current best practical baseline (V10 is technically highest but improvement over V6 is negligible; neither V11 nor V12 beat it):
 
 ```text
 YOLOv8s-seg + imgsz=768 + mild rare Caries oversampling
@@ -431,6 +435,166 @@ A **fundamental change to the training strategy** is required.
 
 ---
 
+## V11: YOLOv8s-seg, imgsz=768, Plan D (decoupled aug + copy-paste)
+
+### Configuration
+
+| Item | Setting |
+|---|---|
+| Model | `yolov8s-seg.pt` |
+| Image size | 768 |
+| Batch size | 16 |
+| Epochs | 60 (template default; CSV ends at epoch 51) |
+| Patience | 25 |
+| Mosaic | `mosaic=0.0` (disabled) |
+| Mixup | `mixup=0.0` (disabled) |
+| Copy-paste | `copy_paste=0.2` (enabled) |
+| Main purpose | Plan D — stop letting mosaic/mixup destroy tiny lesions, and instead synthesise rare Caries with mask-aware copy-paste |
+
+### Why this setting was used
+
+Every prior direction (image size, model size, oversampling) had plateaued at ~0.23–0.24.
+The hypothesis behind Plan D was that the **destructive augmentations** (mosaic downscales
+objects; mixup blurs fine mask boundaries) were hurting the very small lesions we care about,
+while **copy-paste** is a "medical-grade" augmentation that pastes real lesions with their
+masks into new images, boosting rare-Caries exposure without distorting them. The plan was
+to decouple the two: turn off the destructive augmentations and turn on copy-paste.
+Implemented via `experiments/train_small_object_friendly.py`.
+
+### Best validation result
+
+| Metric | Value |
+|---|---:|
+| Best epoch (by Mask mAP50-95) | 42 |
+| Mask Precision | 0.5656 |
+| Mask Recall | 0.4206 |
+| Mask mAP50 | 0.3880 |
+| Mask mAP50-95 | 0.2135 |
+| Box Precision | 0.5747 |
+| Box Recall | 0.4288 |
+| Box mAP50 | 0.4075 |
+| Box mAP50-95 | 0.2372 |
+
+> Note: the run stopped at epoch 51 (best at 42), before patience (25) would have triggered
+> at epoch 67 — i.e. the run was cut short. The trend after the peak was already deteriorating,
+> so a longer run would not have recovered the gap.
+
+### Change from V6 / V10
+
+| Metric | V6 img768 | V10 + mild oversampling | V11 Plan D | V11 vs best |
+|---|---:|---:|---:|---:|
+| Mask Precision | 0.6977 | 0.5074 | 0.5656 | — |
+| Mask Recall | 0.4053 | 0.4685 | 0.4206 | −0.048 vs V10 |
+| Mask mAP50 | 0.4125 | 0.4089 | 0.3880 | −0.021 |
+| Mask mAP50-95 | 0.2336 | 0.2341 | 0.2135 | **−0.0206** |
+| Box mAP50-95 | 0.2568 | 0.2569 | 0.2372 | −0.020 |
+
+### Interpretation
+
+This is a **clear regression**, not noise (−0.020 Mask mAP50-95 is ~7× our ~0.003 noise band).
+Unlike the oversampling runs, this was not a precision/recall trade-off: **both** Mask mAP50
+and Mask mAP50-95 dropped together, meaning overall mask quality fell.
+
+The training curves explain why. `train/seg_loss` decreases smoothly throughout, but
+`val/seg_loss` bottoms out around epoch 17 (≈2.09) and then climbs steadily to ≈2.44 by
+epoch 51 — a textbook overfitting signature, and more pronounced than earlier versions.
+
+The most likely cause is **disabling mosaic entirely**. In YOLO, mosaic is not just an
+object-downscaler; it is the strongest source of regularisation and scene diversity. Removing
+it let the small dataset overfit faster, and `copy_paste=0.2` (a small number of synthetic
+samples) did not compensate. In other words, mosaic's regularisation value outweighed its
+small-object downscaling cost — the opposite of the Plan D assumption.
+
+### Conclusion from V11
+
+Plan D as configured **hurt** the strict mask metric. The lesson is not "copy-paste is bad"
+but that **the variables were not decoupled**: turning off mosaic and turning on copy-paste at
+the same time confounds the result, and the mosaic removal dominated. Copy-paste should be
+retested with mosaic **kept on** before any conclusion about copy-paste itself.
+
+---
+
+## V12: YOLOv8s-seg + P2 small-object head, imgsz=768
+
+### Configuration
+
+| Item | Setting |
+|---|---|
+| Architecture | `yolov8s-seg` + P2 head (4 segment layers, strides 4/8/16/32) |
+| Weights | `.load("yolov8s-seg.pt")` — backbone transfers, P2 branch random-init |
+| Image size | 768 |
+| Batch size | 16 |
+| Epochs | 120 (CSV records 57 epochs) |
+| Patience | 25 |
+| Augmentation | clean V6 baseline: `mosaic=1.0`, `close_mosaic=10`, `mixup=0`, `copy_paste=0` |
+| Oversampling | disabled |
+| Main purpose | Attack the small-object bottleneck at the **architecture** level — a stride-4 (P2) head gives a 192×192 grid at imgsz=768 (vs 96×96 at P3), so the smallest lesions map to more than one anchor cell |
+
+### Why this setting was used
+
+V11 confirmed that augmentation changes could not break the plateau, and image size,
+model size, and oversampling had all been exhausted. The error analysis after V6 showed
+~78% of objects occupy <1% of the image area, so V12 targeted that finding directly at the
+architecture level: add a high-resolution P2 head. Augmentation was reverted to the clean V6
+baseline so the **P2 head is the only change** (single-variable discipline).
+
+### Best validation result
+
+| Metric | Value |
+|---|---:|
+| Best epoch (by Mask mAP50-95) | 32 |
+| Mask Precision | 0.5147 |
+| Mask Recall | 0.3934 |
+| Mask mAP50 | 0.3939 |
+| Mask mAP50-95 | 0.2215 |
+| Box Precision | 0.5170 |
+| Box Recall | 0.3909 |
+| Box mAP50 | 0.4085 |
+| Box mAP50-95 | 0.2510 |
+
+> **Important caveat — the best value is a single-epoch spike.** At ep32 every metric jumped
+> (Mask mAP50-95 0.1965 → **0.2215** → 0.1946 at ep31/32/33; Box mAP50-95 also spiked to 0.251),
+> then fell back the next epoch. This is a lucky checkpoint on a small validation set, not a
+> stable level. Over the final epochs (ep50–57) Mask mAP50-95 sits at ~0.20–0.212 and never
+> re-reaches the ep32 peak. The honest read of V12's true level is **~0.21**.
+
+### Change from V6 / V10
+
+| Metric | V6 img768 | V10 + mild oversampling | V12 P2 head | V12 vs best |
+|---|---:|---:|---:|---:|
+| Mask Precision | 0.6977 | 0.5074 | 0.5147 | — |
+| Mask Recall | 0.4053 | 0.4685 | 0.3934 | **−0.075 vs V10** |
+| Mask mAP50 | 0.4125 | 0.4089 | 0.3939 | −0.015 |
+| Mask mAP50-95 | 0.2336 | 0.2341 | 0.2215 | **−0.0126** (spike); ~−0.02 sustained |
+| Box mAP50-95 | 0.2568 | 0.2569 | 0.2510 | −0.006 |
+
+### Interpretation
+
+V12 did **not** break the plateau. Even taking the ep32 spike at face value it is ≈−0.013
+below the baseline, and the sustained level (~0.21) is ≈−0.02 below it — comparable to V11.
+
+The most informative signal is **recall**. The P2 head exists to recover the tiny lesions
+(~78% of objects <1% area); if it worked, recall should rise. Instead Mask recall *fell* to
+0.393 — well below V10's 0.468 and below V6's 0.405 — and Mask mAP50 also dropped (0.394 vs
+0.41+). So the extra high-resolution head did not detect more small objects; it mostly added
+parameters and training difficulty without the intended benefit.
+
+This is not an under-training artefact. The P2 branch starts from a much higher loss (ep1
+`seg_loss` ≈4.68 vs ~2.6 for the standard head) because it is randomly initialised and converges
+more slowly, but it had caught up by ep32 and produced no new peak in the following 25 epochs.
+`val/seg_loss` bottoms around ep26 (~2.26) and then drifts in the 2.30–2.45 band — overfitting
+is present but less severe than V11's monotonic climb.
+
+### Conclusion from V12
+
+Adding a P2 small-object head to **full-image** YOLOv8s-seg does not break the ~0.23–0.24
+plateau on this dataset, and notably fails to improve recall — the exact metric it was meant to
+move. Combined with the image-size, model-size, oversampling, and augmentation results, this
+is strong evidence that the bottleneck cannot be fixed by tweaking the full-image model. The
+next step must change the **training input** (crop / tile-based training), not the head.
+
+---
+
 ## 3. Cross-Version Conclusions
 
 ## 3.1 Image size conclusion
@@ -494,6 +658,43 @@ Conclusion:
 - Simply training longer is unlikely to help.
 - Future changes should improve generalization rather than extend epochs.
 
+## 3.5 Augmentation conclusion (added after V11)
+
+V11 tested "Plan D": disabling the destructive augmentations (`mosaic=0`, `mixup=0`) and
+enabling mask-aware `copy_paste=0.2`.
+
+```text
+V6  baseline (mosaic on)        ->  Mask mAP50-95 = 0.2336
+V11 mosaic off + copy_paste 0.2 ->  Mask mAP50-95 = 0.2135  (clear regression, more overfitting)
+```
+
+Conclusion:
+
+- Disabling mosaic on this small dataset removes critical regularisation and accelerates
+  overfitting; the loss in regularisation outweighs the benefit of not downscaling small objects.
+- The experiment confounded two changes (mosaic off + copy-paste on), so it cannot judge
+  copy-paste on its own.
+- Copy-paste should only be retested with **mosaic kept on** (or only partially closed via
+  `close_mosaic`).
+
+## 3.6 Architecture conclusion (added after V12)
+
+V12 added a stride-4 (P2) small-object segment head to YOLOv8s-seg, with augmentation reverted
+to the clean V6 baseline.
+
+```text
+V6  baseline (P3/P4/P5 head)        ->  Mask mAP50-95 = 0.2336  (recall 0.405)
+V12 + P2 head (stride-4)            ->  Mask mAP50-95 = 0.2215* (recall 0.393)  *single-epoch spike; ~0.21 sustained
+```
+
+Conclusion:
+
+- A P2 head does **not** break the ~0.23–0.24 plateau on full-image training.
+- Most tellingly, **recall did not improve** (it fell, 0.405/0.468 → 0.393), so the extra
+  high-resolution head failed at its one job: detecting more tiny lesions.
+- The plateau is a property of the **full-image input**, not of the detection head. Changing
+  the head is not enough; the input scale must change.
+
 ---
 
 ## 4. Recommended Next Direction
@@ -503,9 +704,25 @@ All direct improvements to the full-image YOLO approach have now been tested:
 - Image size: `640` → `768` helped; `768` → `896` did not.
 - Model size: YOLOv8m did not improve over YOLOv8s.
 - Oversampling: Both mild (V10) and strong (V7) did not improve Mask mAP50-95.
+- Augmentation (V11): disabling mosaic + adding copy-paste regressed the result (−0.020).
+- Architecture (V12): a P2 small-object head did not beat the baseline and did not improve recall.
 
-The full-image YOLO approach appears to be plateaued.  
-The next step should be a **fundamental change to the training strategy**.
+The full-image YOLO approach is plateaued, and V12 confirms the head is not the bottleneck.  
+The next step must be a **fundamental change to the training input**.
+
+### Immediate next experiment (V13 — crop / tile-based training)
+
+With image size, model size, oversampling, augmentation, and the detection head all exhausted,
+the remaining lever is the **input scale**. Crop / tile-based training is the most on-target
+response to the "~78% of objects <1% of image area" finding: by training on tooth-level or
+region-level crops, tiny Caries lesions occupy a much larger fraction of the input and the
+model can learn finer-grained masks — exactly what the P2 head tried, and failed, to achieve
+at the architecture level.
+
+Lower-effort alternative to run first if crop tooling is not ready:
+
+- **Clean copy-paste ablation** — keep `mosaic=1.0`, `mixup=0`, add `copy_paste=0.2–0.3`.
+  Isolates copy-paste's real contribution without the mosaic-removal side effect that sank V11.
 
 The primary recommended direction is:
 
@@ -572,6 +789,8 @@ Possible future directions:
 ## 6. Current Best Baseline
 
 V10 is technically the highest-scoring run, though the improvement over V6 is negligible (+0.0005).  
+V11 (Plan D) did not beat it — it regressed to 0.2135.  
+V12 (P2 head) did not beat it either — best 0.2215 (a single-epoch spike; ~0.21 sustained).  
 Until a new experiment clearly improves the result, the current best baseline should be considered:
 
 ```text
