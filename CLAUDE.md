@@ -32,6 +32,7 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/02-alphadent-yolo-seg-submission.ipynb` — inference only; loads a checkpoint, runs on test images, writes `submission.csv` (format `id,patient_id,class_id,confidence,poly`).
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
 - `tools/make_clahe_yolo_dataset.py` (1B), `tools/infer_sahi_yolo_seg.py` (1C, visual only — no mAP), `tools/sweep_yolo_conf.py` (1D, submission threshold).
+- `tools/tile_yolo_seg.py` — V13 canonical tiling library (forward: build tiled dataset; reverse: `untile_polygon` + `merge_detections`). Mirrored inline into `src/01` (build+train) and `src/02` (tiled inference+submit) so the notebooks stay Kaggle-self-contained; keep the inline copies in sync with this file.
 - `experiments/train_small_object_friendly.py` — V11 "Plan D" template (mosaic=0, mixup=0, copy_paste=0.2). Defaults to a dry-run printout; do not auto-train.
 - `configs/yolov8s-seg-p2.yaml` — experimental stride-4 head; review before training.
 
@@ -140,3 +141,58 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   at the architecture level. Lower-effort alternative first: clean copy-paste ablation with
   `mosaic=1.0` kept on.
 - **Note**: `results/results.csv` is the same V12 run (live file); not deleted — flag for cleanup.
+
+### 2026-06-14 — V13 (crop/tile training) implemented in notebooks 01 + 02
+- **Decision**: user committed to the full crop/tile pipeline. Structure chosen (after a
+  Kaggle data-portability discussion): **tile + train in `src/01`** (no separate tiled-dataset
+  Kaggle Dataset — re-tiles in `/kaggle/working` each run, self-contained), **tiled inference +
+  submission in `src/02`**. Honors the 01/02 train-vs-inference separation (tiling is train-time
+  data prep).
+- **New file**: `tools/tile_yolo_seg.py` — canonical tiling lib. Forward = `build_tiled_dataset`
+  (slice image, Sutherland-Hodgman clip polygons to tile + renormalize, subsample empty TRAIN
+  tiles, val keeps all). Reverse = `untile_polygon` + `merge_detections` (class-wise bbox-IoU NMS).
+  Geometry round-trip unit-tested (exact). Mirrored inline into both notebooks.
+- **`src/01` rewired V13**: dropped the P2 head (back to stock `yolov8s-seg`), inline tile-build
+  cell creates the tiled dataset from `train_path`/`val_path`, trains at `imgsz=TILE_SIZE`, clean
+  V6 aug, `RUN_NAME` tags `v13_tile`. Single variable vs V6 = tiled input.
+- **`src/02` rewritten**: per-tile predict on numpy crops → `masks.xyn` (tile-norm) →
+  `untile_polygon` → full-image-norm → `merge_detections` → submission rows. Submission format
+  unchanged (`id,patient_id,class_id,confidence,poly`, full-image normalized polys); downstream
+  build/sanity/save cells untouched.
+- **Defaults**: TILE_SIZE=640, OVERLAP=0.20, KEEP_EMPTY=0.15 (train), MIN_AREA_FRAC=0.35. `02`
+  TILE_SIZE/OVERLAP MUST match `01`.
+- **Caveat baked into 01**: the val mAP reported DURING training is on the TILED val split (easier
+  task) and is **not** comparable to the ~0.234 full-image baseline. The comparable number needs
+  tiled+merged inference on FULL val images — deferred to a future error-analysis notebook.
+- **Status**: implemented and **training in progress** (user started the V13 run). README +
+  EN/CN logs updated with a V13 section (config + implementation + the tiled-val-mAP caveat),
+  history tables show V13 as "training in progress / pending". Awaiting
+  `results/version13_results.csv` for the result write-up.
+
+### 2026-06-17 — V13 trained & FAILED (−0.11), comparable eval built in src/03, docs updated
+- **V13 result**: run interrupted by Kaggle at ep61/120 but already converged on tiled-val (best
+  ~0.217 @ ep44, flat from ep34, `val/seg_loss` rising = overfit onset) → **not resumed**.
+  `results/version13_results.csv` holds the 61-epoch curve. `version13_log.txt` deleted (training
+  trace, no lasting value).
+- **New notebook `src/03-alphadent-val-map-eval.ipynb`** (evaluation only): tiled+merged inference
+  on FULL val images for V13, AND V6 `best.pt` re-scored on the same images with the SAME
+  self-contained mask-mAP code (mask-IoU → 10 IoU thr → 101-pt AP) so the V13-vs-V6 delta is a
+  true signal, not a metric artifact. Finds checkpoints by filename `V13_best.pt` / `V6_best.pt`.
+  `evaluate_model` returns raw (tp,conf,pcls,tcls); AP is computed in a later cell so a metric
+  crash doesn't waste the ~2.5h inference.
+- **Result**: **V13 Mask mAP50-95 = 0.0993 vs V6 re-scored 0.2099 → −0.1106** (worst in project).
+  V6 re-scored 0.2099 vs historical 0.234 = ~0.024 metric-impl gap, identical for both → delta valid.
+  **Collapse is entirely in the LARGE classes** (Abrasion −0.41, Crown −0.43, Filling −0.10); tiny
+  Caries moved only ±0.01–0.02. Cause: tiling drops large objects from training (MIN_AREA_FRAC=0.35,
+  they straddle borders), fragments them at inference, and merge_detections never stitches
+  non-overlapping fragments.
+- **Key reframing**: **mAP weight ≠ object count.** "~78% objects <1% area" is the object-COUNT
+  distribution; mAP is per-class-averaged and carried by the large/common classes. The small-object
+  bottleneck framing overstated the headroom → re-explains the V6 plateau and V12/V13 failures.
+- **Conclusion**: naive tiling is the wrong GLOBAL strategy; **V6 (≈0.234) remains best, use it for
+  submissions.** A small-object effort must not sacrifice large classes (hybrid only). Updated
+  README + EN/CN logs (history rows, full V13 sections, EN/CN §3.7 input-scale conclusion, post-V13
+  "next direction" rewrite) and the project memory.
+- **Gotcha**: Kaggle ships **NumPy 2.x (`np.trapz` removed → `np.trapezoid`)**; `getattr(np,
+  "trapezoid", np.trapz)` is itself buggy (default arg eagerly evaluated). Use
+  `np.trapezoid if hasattr(np, "trapezoid") else np.trapz`.

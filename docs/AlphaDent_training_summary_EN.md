@@ -19,10 +19,13 @@ The most important development metric is **Mask mAP50-95**, because this is a se
 | V10 | Test mild rare Caries oversampling | YOLOv8s-seg | 768 | YOLOv8s-seg + imgsz=768 + mild rare Caries oversampling | 0.2341 | Marginally above V6 but within noise; recall improved, precision fell |
 | V11 | Plan D: decouple destructive aug + medical-grade copy-paste | YOLOv8s-seg | 768 | `mosaic=0`, `mixup=0`, `copy_paste=0.2` | 0.2135 | **Clear regression (−0.020)**; disabling mosaic accelerated overfitting |
 | V12 | Attack small-object bottleneck at the architecture level | YOLOv8s-seg + P2 head | 768 | Add stride-4 (P2) segment head; aug reverted to clean V6 baseline | 0.2215* | **Did not beat baseline (≈−0.013)**; recall did not improve, so P2 caught no extra small lesions |
+| V13 | Attack the bottleneck at the INPUT level | YOLOv8s-seg (tiles) | 640/tile | Crop / tile-based training: slice each image into overlapping tiles and train on tiles | 0.0993† | **Severe regression (−0.11)**; tiling fragments/discards the large objects that carry most of the mAP |
 
 \* V12's 0.2215 is a single-epoch spike at ep32; the sustained level is ~0.21, i.e. ≈−0.02 vs the V6/V10 baseline.
 
-Current best practical baseline (V10 is technically highest but improvement over V6 is negligible; neither V11 nor V12 beat it):
+† V13's 0.0993 is the **comparable** full-image (tiled + merged) Mask mAP50-95, measured against V6 re-scored with the *same* code (0.2099), not against the historical 0.234. See the V13 section.
+
+Current best practical baseline (V10 is technically highest but improvement over V6 is negligible; V11/V12/V13 did not beat it):
 
 ```text
 YOLOv8s-seg + imgsz=768 + mild rare Caries oversampling
@@ -595,6 +598,136 @@ next step must change the **training input** (crop / tile-based training), not t
 
 ---
 
+## V13: YOLOv8s-seg, crop / tile-based training (trained, FAILED — severe regression)
+
+### Configuration
+
+| Item | Setting |
+|---|---|
+| Model | stock `yolov8s-seg.pt` (the V12 P2 head is reverted) |
+| Training input | **tiles** — each panoramic image sliced into overlapping tiles |
+| Tile size | 640 px (also the training `imgsz`, so a tile is fed ~1:1) |
+| Overlap | 0.20 |
+| Empty-tile keep ratio (train) | 0.15 (val keeps all tiles) |
+| Min area fraction | 0.35 (drop a clipped object if <35% of its area survives the tile) |
+| Augmentation | clean V6 baseline: `mosaic=1.0`, `close_mosaic=10`, `mixup=0`, `copy_paste=0` |
+| Oversampling | disabled |
+| Epochs / patience | 120 / 25 |
+| Main purpose | Attack the small-object bottleneck at the **input** level, the fix the V12 P2 head failed to deliver at the architecture level |
+
+### Why this setting was used
+
+V12 proved the bottleneck is the **full-image input**, not the detection head: a tiny lesion
+is only a few pixels after a panoramic image is downscaled to 768, so even a high-resolution
+P2 head had no signal to work with (recall did not improve). V13 changes the input instead of
+the network: by training on tiles, a lesion that was ~5 px in the full image becomes ~20–40 px
+in a tile, giving the model enough pixels to learn a fine-grained mask. The tiled input is the
+single variable vs the V6 baseline.
+
+### Implementation (this is what changed in the code)
+
+- **`tools/tile_yolo_seg.py`** — new canonical tiling library, the single source of truth:
+  - *forward* `build_tiled_dataset`: slice each image, clip every polygon to the tile with
+    Sutherland-Hodgman and renormalize to the tile frame, subsample object-free train tiles
+    (val keeps all), write a new YOLO-seg dataset + `yolo_seg_tiles.yaml`;
+  - *reverse* `untile_polygon` (tile-normalized → full-image-normalized) and `merge_detections`
+    (class-wise bbox-IoU NMS to de-duplicate the same object seen in overlapping tiles).
+  - The full-image → tile → full-image coordinate round-trip is unit-tested (exact).
+- **`src/01`** is now self-contained: running it top to bottom **builds the tiled dataset in
+  `/kaggle/working` and then trains** on it (no separate Kaggle Dataset upload). The P2 head is
+  dropped (stock `yolov8s-seg`), training runs at `imgsz=tile size`, and `RUN_NAME` is tagged
+  `v13_tile`. The tiling code is mirrored inline so the notebook stays Kaggle-self-contained.
+- **`src/02`** is rewritten for tiled inference: slice each test image with the same geometry,
+  predict per tile, map polygons back to full-image coordinates, merge overlapping detections,
+  and write `submission.csv`. The submission format is unchanged
+  (`id,patient_id,class_id,confidence,poly`, full-image-normalized polygons), and `02`'s tile
+  size / overlap must match `01`.
+
+### ⚠️ The val mAP reported during training is NOT comparable to the 0.234 baseline
+
+Training validates on the **tiled** val split, which is an easier task (objects are relatively
+larger), so the Mask mAP in `results.csv` will look inflated. Use it only for early stopping.
+The number comparable to the ~0.234 full-image baseline must come from **tiled + merged
+inference on the full val images** (deferred to a separate error-analysis notebook).
+
+### Result — a severe regression, the worst of any experiment
+
+The training run was interrupted by a Kaggle-side problem at epoch 61/120, but it had clearly
+converged on the tiled-val metric (best tiled-val Mask mAP50-95 ≈ 0.217 @ ep44, flat from ep34
+onward with `val/seg_loss` starting to rise — i.e. overfitting onset), so it was not resumed.
+`results/version13_results.csv` holds the 61-epoch curve.
+
+The decisive number is the **comparable** one: `best.pt` was run with **tiled + merged inference
+on the full val images** (notebook `src/03-alphadent-val-map-eval.ipynb`), and — critically — the
+V6 baseline `best.pt` was re-scored on the same images with the **same** self-contained mask-mAP
+code (mask-IoU matching → 10 IoU thresholds → 101-point AP). This makes the V13-vs-V6 delta a
+true signal rather than a metric artifact:
+
+| Metric (same code, full val images) | V13 (tiled) | V6 (native, re-scored) | Delta |
+|---|---:|---:|---:|
+| Mask mAP50    | 0.2428 | 0.3687 | −0.1259 |
+| Mask mAP50-95 | **0.0993** | **0.2099** | **−0.1106** |
+
+(V6 re-scored = 0.2099 vs the historical 0.234; the ~0.024 gap is the metric-implementation
+difference — full-resolution mask rasterization + 101-point AP vs Ultralytics' internal val. It
+is applied identically to both models, so the −0.11 delta is far beyond any noise.)
+
+**Per-class Mask mAP50-95 — the failure is entirely in the large objects:**
+
+| Class | n_gt | V13 | V6 | Delta |
+|---|---:|---:|---:|---:|
+| Abrasion | 408 | 0.2342 | **0.6471** | **−0.4129** |
+| Crown | 19 | 0.1995 | **0.6313** | **−0.4318** |
+| Filling | 186 | 0.1810 | 0.2799 | −0.0989 |
+| Caries 1 | 62 | 0.0869 | 0.1195 | −0.0326 |
+| Caries 2 | 73 | 0.0320 | 0.0845 | −0.0525 |
+| Caries 3 | 33 | 0.0213 | 0.0116 | +0.0097 |
+| Caries 4 | 4 | 0.0024 | 0.0000 | +0.0024 |
+| Caries 5 | 81 | 0.1290 | 0.1097 | +0.0193 |
+| Caries 6 | 5 | 0.0076 | 0.0051 | +0.0025 |
+
+### Why it failed — tiling destroys the large objects that carry the score
+
+The collapse is concentrated in the **large** classes (Abrasion −0.41, Crown −0.43, Filling
+−0.10), driven by a three-part mechanism:
+
+1. **Training discarded large objects.** With `MIN_AREA_FRAC=0.35`, any instance clipped by a
+   tile boundary so that <35% of its area survives is dropped from that tile's labels. Large
+   structures (Crown, Abrasion) almost always straddle tile boundaries, so most of their
+   instances never entered training — the model barely learned them.
+2. **Inference fragments them.** Each 640 px tile only sees a slice of a large object, so it
+   predicts a fragment mask, not the whole object.
+3. **Merge does not stitch fragments.** `merge_detections` only de-duplicates *overlapping*
+   detections (class-wise bbox-IoU NMS); two fragments of one Crown in adjacent tiles barely
+   overlap, so they are never reassembled. Each fragment has low IoU against the full GT mask
+   (below the 0.5 threshold), so large objects are effectively all missed.
+
+Meanwhile the intended beneficiaries — tiny Caries — moved only by ±0.01–0.02, and the classes
+that improved (Caries 3/4/5/6) have tiny support (n_gt 4, 33, 5, 81). The small-object gain
+never materialised, and even if it had, those classes are too low-weight to offset the
+large-object collapse.
+
+### The key reframing: mAP weight ≠ object count
+
+The project's guiding statement — "~78% of objects occupy <1% of the image" — describes the
+**object-count** distribution, not the **mAP-weight** distribution. mAP is averaged **per class**,
+and the score is carried by the large/common classes (V6: Abrasion 0.65, Crown 0.63), not by the
+rare, tiny Caries (whose AP is low for *both* models and whose support is single-digit). Tiling
+sacrificed exactly the classes that produce the score. This also re-explains the V6 plateau and
+the V12 P2-head failure: ~0.23 is mostly the big classes near saturation; the tiny Caries are
+both hard and low-weight, so improving them barely moves the aggregate.
+
+### Conclusion
+
+**V13 is a decisive failure (−0.11) and the worst result in the project.** Naive tiling is the
+wrong global strategy for this dataset because it trades away the large objects that dominate the
+metric. **V6 (≈0.234) remains the best model; submissions should continue to use it.** If small
+lesions are still a target, the approach must *not* sacrifice large objects — e.g. a hybrid where
+a full-image model handles the large classes and tiling is only an auxiliary small-object branch,
+rather than replacing full-image training wholesale.
+
+---
+
 ## 3. Cross-Version Conclusions
 
 ## 3.1 Image size conclusion
@@ -695,6 +828,25 @@ Conclusion:
 - The plateau is a property of the **full-image input**, not of the detection head. Changing
   the head is not enough; the input scale must change.
 
+## 3.7 Input-scale conclusion (added after V13)
+
+V13 finally changed the input scale (tile-based training). Measured on the comparable full-image
+metric (same code for both models):
+
+```text
+V6  baseline (full image)   ->  Mask mAP50-95 = 0.2099  (re-scored)
+V13 tiled training          ->  Mask mAP50-95 = 0.0993  (−0.1106)
+```
+
+Conclusion:
+
+- Changing the input scale via naive tiling is **not** the answer — it is the worst result so far.
+- The damage is in the **large** classes (Abrasion −0.41, Crown −0.43), which tiling clips out of
+  training (`MIN_AREA_FRAC`), fragments at inference, and never reassembles.
+- **mAP weight ≠ object count**: the score is carried by the large/common classes, so the
+  "small-object bottleneck" framing overstated the headroom — improving tiny Caries cannot offset
+  losing the large objects. Any small-object effort must preserve the large classes.
+
 ---
 
 ## 4. Recommended Next Direction
@@ -706,55 +858,60 @@ All direct improvements to the full-image YOLO approach have now been tested:
 - Oversampling: Both mild (V10) and strong (V7) did not improve Mask mAP50-95.
 - Augmentation (V11): disabling mosaic + adding copy-paste regressed the result (−0.020).
 - Architecture (V12): a P2 small-object head did not beat the baseline and did not improve recall.
+- Input scale (V13): tile-based training regressed severely (−0.11) by destroying the large objects.
 
-The full-image YOLO approach is plateaued, and V12 confirms the head is not the bottleneck.  
-The next step must be a **fundamental change to the training input**.
+The full-image YOLO approach is plateaued, and V12 confirms the head is not the bottleneck.
+V13 then tested the remaining lever — the **training input** — via crop/tile-based training, and
+it **failed severely** (see below).
 
-### Immediate next experiment (V13 — crop / tile-based training)
+### V13 — crop / tile-based training (trained, FAILED −0.11)
 
 With image size, model size, oversampling, augmentation, and the detection head all exhausted,
-the remaining lever is the **input scale**. Crop / tile-based training is the most on-target
-response to the "~78% of objects <1% of image area" finding: by training on tooth-level or
-region-level crops, tiny Caries lesions occupy a much larger fraction of the input and the
-model can learn finer-grained masks — exactly what the P2 head tried, and failed, to achieve
-at the architecture level.
+the remaining lever was the **input scale**. V13 trained on overlapping tiles so tiny Caries
+lesions would occupy a much larger fraction of the input. The result was the **worst in the
+project**: comparable Mask mAP50-95 = **0.0993 vs V6's re-scored 0.2099 (−0.11)**, because naive
+tiling fragments and discards the large objects (Abrasion, Crown, Filling) that carry most of the
+per-class-averaged mAP. The full analysis is in the V13 section above.
 
-Lower-effort alternative to run first if crop tooling is not ready:
+The reframing that came out of V13: **mAP weight ≠ object count.** The "~78% of objects are tiny"
+statement is about object *count*; the score is dominated by the large/common classes, and the
+rare tiny Caries are both hard and too low-weight to move the aggregate. So the "small-object
+bottleneck" framing that motivated V12 and V13 was misdirected — improving the tiny classes was
+never going to lift mAP much, and trading away the large classes is catastrophic.
+
+If small lesions are still pursued, the approach must **not sacrifice large objects** (e.g. a
+hybrid: a full-image model for the large classes + tiling only as an auxiliary small-object
+branch). A lower-effort alternative experiment that does not touch the large classes:
 
 - **Clean copy-paste ablation** — keep `mosaic=1.0`, `mixup=0`, add `copy_paste=0.2–0.3`.
   Isolates copy-paste's real contribution without the mosaic-removal side effect that sank V11.
 
-The primary recommended direction is:
-
-```text
-Crop or tile-based training
-```
-
-### Why this direction
+### Why the original "crop training" direction was attractive (and why it backfired)
 
 The error analysis after V6 identified that approximately 78% of validation objects occupied less than 1% of the image area.  
-Training on full panoramic images means that tiny Caries regions are extremely small relative to the model input.
+Training on full panoramic images means that tiny Caries regions are extremely small relative to the model input, which is why crop/tile training looked promising.
 
-Crop-based training addresses this directly:
+V13 showed the flaw: tiling does make tiny lesions larger relative to the input, but it
+**simultaneously breaks the large objects** (clipped out of training by `MIN_AREA_FRAC`,
+fragmented at inference, never reassembled by the merge step). Since the large classes carry the
+mAP, the net effect is a large regression, not a gain.
 
-- Train on tooth-level or region-level crops instead of full images.
-- This makes tiny Caries lesions much larger relative to the input.
-- The model can then develop finer-grained segmentation representations.
+### Suggested next configuration (post-V13)
 
-### Suggested next configuration
+Plain crop/tile training is no longer recommended — V13 proved it destroys the large classes.
+The current options, in order of recommendation:
 
-| Item | Suggested Setting |
-|---|---|
-| Model | `yolov8s-seg.pt` |
-| Image size | 640 or 768 (relative to crop size) |
-| Training data | Tooth-level or region-level crops from panoramic images |
-| Epochs | 100–150 |
-| Patience | 25–30 |
-| Augmentation | Default/baseline settings |
-
-### Alternative if crop training is too complex to implement first
-
-If crop-based training is not yet feasible, the next controlled experiment could be per-class mAP analysis to understand which specific Caries subtypes drive the bottleneck, followed by threshold tuning on the validation set.
+1. **Keep V6 (≈0.234) as the production baseline.** It is still the best model; submissions
+   should use it.
+2. **Hybrid, if small lesions are still pursued.** Run the full-image V6 model for the large
+   classes and use tiling *only* as an auxiliary branch for the tiny Caries, then merge — instead
+   of replacing full-image training wholesale. This is the only tiling variant that does not
+   sacrifice the large objects.
+3. **Clean copy-paste ablation (low effort, does not touch the large classes).** Keep
+   `mosaic=1.0`, `mixup=0`, add `copy_paste=0.2–0.3`; isolates copy-paste without the
+   mosaic-removal side effect that sank V11.
+4. **Accept the ceiling.** Given the large classes are near saturation and the tiny Caries are
+   low-weight, ~0.23–0.24 may be the practical ceiling for this model/dataset.
 
 ---
 
@@ -791,6 +948,7 @@ Possible future directions:
 V10 is technically the highest-scoring run, though the improvement over V6 is negligible (+0.0005).  
 V11 (Plan D) did not beat it — it regressed to 0.2135.  
 V12 (P2 head) did not beat it either — best 0.2215 (a single-epoch spike; ~0.21 sustained).  
+V13 (crop/tile training) regressed severely — comparable Mask mAP50-95 = 0.0993 vs V6's re-scored 0.2099 (−0.11).  
 Until a new experiment clearly improves the result, the current best baseline should be considered:
 
 ```text
