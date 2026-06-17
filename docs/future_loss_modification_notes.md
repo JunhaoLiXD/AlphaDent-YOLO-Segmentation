@@ -8,9 +8,17 @@
 
 ## Motivation
 
-Current best mask mAP50-95 = **0.2341** (V10).  The plateau across V6–V10
-(0.224–0.234) suggests the model has learned the large anatomical classes
-reasonably well, but struggles with rare, small Caries lesions.
+Current best mask mAP50-95 = **0.2341** (V10). The plateau has since been confirmed
+across V6–V13: augmentation changes (V11, −0.020), a P2 small-object head (V12, no gain),
+and crop/tile training (V13, −0.11) all failed to beat it.
+
+> **Important caveat from V13 (mAP weight ≠ object count).** Error analysis found ~78% of
+> objects occupy <1% of the image, but that is the *object-count* distribution, not the
+> *mAP-weight* distribution. mAP is averaged per class and is carried by the large/common
+> classes (Abrasion, Crown), not the rare tiny Caries — whose AP is low and whose support is
+> single-digit. So pushing the model toward rare Caries (the goal of the losses below) is
+> unlikely to move the aggregate much on its own, and must not come at the cost of the large
+> classes. Treat these as small-object recall experiments, not as plateau-breakers.
 
 Standard cross-entropy + binary mask BCE (Ultralytics defaults) treat every
 pixel and every class equally.  The following loss modifications aim to push
@@ -110,8 +118,10 @@ with standard BCE.  Recommend adding as a soft regularisation term
 
 ## Recommended Experiment Order
 
-1. **Copy-paste augmentation first** (`experiments/train_small_object_friendly.py`)
-   — no loss change, lower risk, likely to help if rare lesion count is the bottleneck.
+1. **Clean copy-paste ablation first** (`experiments/train_small_object_friendly.py`,
+   but with `mosaic=1.0` kept on) — no loss change, lower risk. NB: V11 already ran copy-paste
+   *with mosaic disabled* and regressed (−0.020); the mosaic removal, not copy-paste, was the
+   likely cause, so copy-paste still needs a clean test with mosaic on before any verdict.
 
 2. **Class-weighted mask BCE** (Option B)
    — if copy-paste alone doesn't lift Caries 3-6 AP.
@@ -122,6 +132,10 @@ with standard BCE.  Recommend adding as a soft regularisation term
 4. **Tversky loss** (Option C)
    — only if recall specifically (not precision) is the limiting factor after
    inspecting the per-class PR curves from `tools/val_native_yolo_seg.py`.
+
+> Per the V13 reframing above, none of these is expected to break the ~0.23–0.24 plateau on its
+> own — they target the low-weight tiny classes. The plateau-relevant lever is preserving the
+> large classes (a hybrid full-image + auxiliary-tiling approach), not the loss function.
 
 ---
 

@@ -1,7 +1,14 @@
 # configs/yolov8s-seg-p2.yaml
 # ─────────────────────────────────────────────────────────────────────────────
-# EXPERIMENTAL — DO NOT TRAIN WITHOUT REVIEW
+# EXPERIMENTAL — already trained as V12, did NOT help (kept for reference)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# OUTCOME (V12): this P2 head was trained at imgsz=768 with clean V6 augmentation and did NOT
+# beat the baseline — best Mask mAP50-95 0.2215 (a single-epoch spike; ~0.21 sustained, ≈−0.02 vs
+# V6/V10). Decisively, recall did NOT improve (0.393 vs V10's 0.468), so the high-resolution head
+# failed at its one job: detecting more tiny lesions. The bottleneck is the full-image input, not
+# the detection head. See the V12 section in docs/AlphaDent_training_summary_EN.md. The rationale
+# below is the original (pre-result) motivation.
 #
 # P2 detection head for YOLOv8s-seg (small-object focused).
 #

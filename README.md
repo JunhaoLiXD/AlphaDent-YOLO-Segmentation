@@ -28,7 +28,9 @@ AlphaDent/
 ├── docs/
 │   ├── training_overview.md                  # Workflow and model overview
 │   ├── AlphaDent_training_summary_EN.md      # Detailed experiment log (English)
-│   └── AlphaDent_training_summary_CN.md      # Detailed experiment log (Chinese)
+│   ├── AlphaDent_training_summary_CN.md      # Detailed experiment log (Chinese)
+│   ├── future_loss_modification_notes.md     # Research notes: loss ideas (unimplemented)
+│   └── small_object_research_notes.md        # Research notes: two-stage detect-then-refine
 ├── results/
 │   ├── version5_results.csv    # Training metrics per epoch, V5
 │   ├── version6_results.csv    # V6
@@ -42,7 +44,12 @@ AlphaDent/
 ├── src/
 │   ├── 01-yolo-seg-baseline-training-alphadent.ipynb   # V13: tile + train (self-contained)
 │   ├── 02-alphadent-yolo-seg-submission.ipynb          # V13: tiled inference + submission
-│   └── 03-alphadent-val-map-eval.ipynb                 # comparable full-image mAP (V13 vs V6, same code)
+│   ├── 03-alphadent-val-map-eval.ipynb                 # comparable full-image mAP (V13 vs V6, same code)
+│   ├── 04-stage2-oracle-roi.ipynb                      # Phase 0 oracle for two-stage detect-then-refine
+│   └── 05-stage1-recall-and-transfer.ipynb             # Phase 1a/1b: real V6 Stage-1 recall + transfer check
+├── stage2/                     # Stage-2 (detect-then-refine) run outputs
+│   ├── stage2_history.csv      # Phase 0 per-epoch training curve
+│   └── stage2_results.csv      # Phase 0 per-class oracle AP vs V6
 └── tools/
     └── tile_yolo_seg.py        # V13 canonical tiling library (mirrored inline into 01 & 02)
 ```
@@ -117,6 +124,32 @@ V6 re-scored = 0.2099 vs the historical 0.234; the ~0.024 gap is the metric-impl
 **Conclusion:** naive tiling is the wrong global strategy for this dataset. **V6 (≈0.234) remains the best model and should be used for submissions.** A small-object approach must not sacrifice the large classes (e.g. a hybrid: full-image model + tiling as an auxiliary small-object branch only).
 
 **Evaluation tooling:** `src/03-alphadent-val-map-eval.ipynb` scores both checkpoints on the full val images with one self-contained mask-mAP implementation (mask-IoU matching → 10 IoU thresholds → 101-point AP); it expects `V6_best.pt` and `V13_best.pt` as Kaggle Datasets.
+
+## Stage-2 detect-then-refine — Phase 0 oracle (direction validated)
+
+After V13, the next direction is a **two-stage detect-then-refine** pipeline (full design in
+[`docs/small_object_research_notes.md`](docs/small_object_research_notes.md)): a detector (V6) finds
+boxes, small boxes are re-cropped from the **original-resolution** image and refined by a second
+model. `src/04-stage2-oracle-roi.ipynb` runs **Phase 0** — an oracle that uses validation **GT
+boxes** as a "perfect Stage 1" to measure the upper bound of a Stage-2 refiner (U-Net + ImageNet
+ResNet18 encoder, class + fine mask).
+
+**Phase 0 result (30 epochs, oracle):** the small Caries classes *with adequate support* clearly
+beat V6 — Caries 1/2/3/5 by **+0.11 to +0.22** Mask AP. Oracle mAP50-95 = **0.312**, Hybrid
+(large→V6, small→Stage2) = **0.331**, vs V6 0.210. Crown regressed (−0.165), confirming large
+objects should route to V6. Per-class numbers are archived in `stage2/stage2_results.csv`.
+
+**Honest caveats (these define Phase 1):** the oracle assumes **perfect recall** (GT boxes), so
+part of the gain is perfect localization, not refinement — the real ceiling depends on a real
+Stage-1 detector's small-box recall. And small classes are **low-weight**, so the aggregate
+competition mAP will rise only modestly even in the best case. **Phase 1** therefore measures real
+Stage-1 recall first, then retrains Stage 2 on real detector boxes **with an added background class**
+(to reject false-positive boxes). V6 (≈0.234) remains the production model.
+
+`src/05-stage1-recall-and-transfer.ipynb` runs **Phase 1a** (V6-as-Stage-1 per-class localization
+recall — the gate) and **Phase 1b** (transfer check: V6 boxes → current `stage2_best.pt`, `full` and
+`TP-only` pipeline Mask mAP). It needs the V6 detector + `stage2_best.pt` as Kaggle inputs. The
+decision to build Phase 1c (retrain on real boxes + background class) is made from its numbers.
 
 ---
 

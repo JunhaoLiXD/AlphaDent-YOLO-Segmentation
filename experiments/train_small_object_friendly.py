@@ -1,10 +1,16 @@
 """
 experiments/train_small_object_friendly.py
 -------------------------------------------
-Training template with small-object-friendly augmentation settings (Priority 2).
+Training template with small-object-friendly augmentation settings (the V11 "Plan D" template).
 
 DO NOT run this unless you explicitly decide to retrain.
 This is a configurable template, not an automatic pipeline.
+
+⚠️ OUTCOME: this exact config was run as V11 and REGRESSED (Mask mAP50-95 0.2336 → 0.2135, −0.020).
+   Disabling mosaic stripped the small dataset's main regulariser and accelerated overfitting;
+   copy_paste=0.2 did not compensate. The two changes were confounded (mosaic off + copy-paste on),
+   so this does NOT prove copy-paste is bad — but if you reuse this template, set `mosaic=1.0`
+   (keep it ON) to isolate copy-paste cleanly. See the V11 section in docs/AlphaDent_training_summary_EN.md.
 
 Key augmentation changes vs V10 baseline:
   mosaic=0.0      Mosaic randomly downscales objects; disabling it keeps

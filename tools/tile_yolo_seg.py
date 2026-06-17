@@ -4,7 +4,16 @@ tools/tile_yolo_seg.py
 Canonical crop / tile-based training utilities for AlphaDent YOLO segmentation
 (Experiment V13).
 
-Why tiling?
+⚠️ OUTCOME: V13 FAILED. Naive tiling regressed the comparable full-image Mask mAP50-95 to
+   0.0993 vs V6's re-scored 0.2099 (−0.11, the worst result in the project). Tiling clips large
+   objects out of training (MIN_AREA_FRAC), fragments them at inference, and merge_detections never
+   stitches the non-overlapping fragments back together, so the large classes that carry most of
+   the per-class-averaged mAP collapse (Abrasion −0.41, Crown −0.43). V6 (≈0.234) remains the best
+   model; use it for submissions. This library is kept for reference / a possible hybrid
+   (full-image model + tiling as an auxiliary small-object branch only). The "Why tiling?" rationale
+   below is the original (pre-result) hypothesis — read it knowing the experiment did not pan out.
+
+Why tiling? (original hypothesis — see the OUTCOME note above)
   The V6 error analysis found ~78% of objects occupy <1% of the image area, and
   every full-image lever (image size, model size, oversampling, augmentation, and
   the V12 P2 head) plateaued at ~0.234 Mask mAP50-95. V12 proved the bottleneck is
