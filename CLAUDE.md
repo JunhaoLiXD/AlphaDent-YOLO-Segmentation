@@ -36,7 +36,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/02-alphadent-yolo-seg-submission.ipynb` — inference only; loads a checkpoint, runs on test images, writes `submission.csv` (format `id,patient_id,class_id,confidence,poly`).
 - `src/03-alphadent-val-map-eval.ipynb` — evaluation only; comparable full-image (tiled+merged) Mask mAP, V13 vs V6 re-scored with the same self-contained mask-mAP code.
 - `src/04-stage2-oracle-roi.ipynb` — Phase 0 oracle for the two-stage detect-then-refine plan (`docs/small_object_research_notes.md`): GT boxes as a perfect Stage 1 → high-res ROI → U-Net+pretrained-ResNet18 Stage 2 (class + fine mask) → comparable full-image Mask mAP vs documented V6. **Run; direction validated** (outputs in `stage2/`).
-- `src/05-stage1-recall-and-transfer.ipynb` — Phase 1a/1b: runs V6 as a real Stage 1 and measures per-class **localization recall** (the gate), then the transfer check (feed V6 boxes into `stage2_best.pt`, full + TP-only pipeline Mask mAP). Needs the V6 detector + `stage2_best.pt` as Kaggle inputs. Decides whether to start Phase 1c.
+- `src/05-stage1-recall-and-transfer.ipynb` — Phase 1a/1b: runs V6 as a real Stage 1 and measures per-class **localization recall** (the gate, PASSED), then the transfer check (feed V6 boxes into `stage2_best.pt`, full + TP-only pipeline Mask mAP — WEAK). Needs the V6 detector + `stage2_best.pt` as Kaggle inputs. Results in `stage2/phase1a_recall.csv` / `phase1b_pipeline.csv`.
+- `src/06-stage2-phase1c-real-boxes.ipynb` — Phase 1c (BUILT, not yet trained): retrain Stage 2 on **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→fg, <0.3→bg, [0.3,0.5)→ignore; bg subsampled ~3:1) with a **background class** (`nc+1`), warm-started from `stage2_best.pt`; evals full V6→Stage2 pipeline (`full@0.05` headline) + hybrid (large→V6) vs V6 0.2099. Same V6+`stage2_best.pt` Kaggle inputs as `src/05`.
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
 - `tools/make_clahe_yolo_dataset.py` (1B), `tools/infer_sahi_yolo_seg.py` (1C, visual only — no mAP), `tools/sweep_yolo_conf.py` (1D, submission threshold).
 - `tools/tile_yolo_seg.py` — V13 canonical tiling library (forward: build tiled dataset; reverse: `untile_polygon` + `merge_detections`). Mirrored inline into `src/01` (build+train) and `src/02` (tiled inference+submit) so the notebooks stay Kaggle-self-contained; keep the inline copies in sync with this file.
@@ -285,4 +286,31 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   `stage2_best.pt` or the transfer check is unfair.
 - **Decision rule (in §9)**: proceed to Phase 1c iff (small-Caries localization recall is non-trivial)
   AND (`TPonly` small-Caries AP clearly beats V6). `full` < V6 is expected (no background class) and
-  is not a reason to abandon. Status: user is running it; awaiting the recall + pipeline numbers.
+  is not a reason to abandon.
+
+### 2026-06-17 — Phase 1a/1b analysed; `src/06` (Phase 1c) built
+- **Phase 1a/1b results** (user ran `src/05`, added `stage2/phase1a_recall.csv` +
+  `stage2/phase1b_pipeline.csv`):
+  - **1a gate PASSED.** V6 localization recall @conf0.05: Caries 1/2/3/5 = 0.89/0.73/0.58/0.80 @IoU0.3
+    (0.74/0.62/0.36/0.72 @IoU0.5). Recall drops 40–60% at conf0.25 → **Stage 1 must stay at conf≈0.05**
+    (user's decision; the supported small-Caries boxes exist, recall is not the bottleneck).
+  - **1b transfer WEAK / rule not cleanly met.** Aggregate `full@0.05`=0.182 (<V6 0.210),
+    `TPonly@0.05`=0.218 (perfect-FP upper bound, ≈V6, carried by Abrasion +0.13 not Caries). Oracle
+    Caries gains evaporated (TPonly Caries1/2 ≈flat, 3 +0.03, 5 +0.05). Cause = **GT→V6 box-framing
+    domain gap** + **missing background class** — both fixable, both addressed by Phase 1c.
+- **Decision (with user)**: proceed to Phase 1c despite the soft 1b signal, because the weak transfer
+  is explained by the two fixable causes, not by Stage 2 being useless.
+- **New notebook `src/06-stage2-phase1c-real-boxes.ipynb`** (23 cells, Kaggle self-contained, built via
+  one-off `tools/_build_src06.py` then deleted; all 11 code cells compile). Retrains Stage 2 on **V6's
+  TRAIN-split predicted boxes at conf=0.05**: box-IoU **≥0.5**→foreground (that GT's class + GT mask
+  rasterized in the V6-box ROI frame), **<0.3**→background (`nc+1`, empty mask), **[0.3,0.5)**→IGNORED;
+  background subsampled **~3:1** vs FG. **Warm-started** from `stage2_best.pt` (encoder/decoder/seg head
+  copied; classifier head grown nc→nc+1, overlapping rows copied, bg row at init). Seg loss FG-only, CE
+  (incl. bg) on all. Checkpoint by a combined proxy (FG mask-IoU + acc) on a 10% train-ROI holdout. §9
+  scores the full V6→Stage2 pipeline (`full@0.05` headline, FP rejection via bg; `TPonly@0.05` ceiling)
+  + **hybrid (large→V6, small→Stage2)** with the src/03/04 comparable mask-mAP.
+- **Go/no-go (set with user)**: **hybrid mAP > V6 0.2099 beyond the ~0.003 noise band** → integrate into
+  a submission; otherwise Stage 2 stays a research result and V6 remains the production model.
+- **Status**: implemented, **not yet trained**. README + `docs/small_object_research_notes.md` (Phase
+  1a/1b result section, Phase 1c built in recommended-order item 4, status banner) + project memory
+  updated. Awaiting the Kaggle run → `phase1c_pipeline.csv` / `phase1c_summary.json`.

@@ -148,8 +148,20 @@ Stage-1 recall first, then retrains Stage 2 on real detector boxes **with an add
 
 `src/05-stage1-recall-and-transfer.ipynb` runs **Phase 1a** (V6-as-Stage-1 per-class localization
 recall — the gate) and **Phase 1b** (transfer check: V6 boxes → current `stage2_best.pt`, `full` and
-`TP-only` pipeline Mask mAP). It needs the V6 detector + `stage2_best.pt` as Kaggle inputs. The
-decision to build Phase 1c (retrain on real boxes + background class) is made from its numbers.
+`TP-only` pipeline Mask mAP). It needs the V6 detector + `stage2_best.pt` as Kaggle inputs.
+
+**Phase 1a/1b result (`stage2/phase1a_recall.csv`, `phase1b_pipeline.csv`):** the gate **passed** —
+at conf=0.05 V6 localizes the supported small Caries (recall@IoU0.3: Caries 1/2/3/5 ≈ 0.89/0.73/0.58/0.80;
+recall collapses 40–60% if conf is raised to 0.25, so Stage 1 must stay at conf≈0.05). But the transfer
+was **weak**: `full@0.05 = 0.182` (below V6, no background class to reject FPs) and even the perfect-FP
+`TPonly@0.05 = 0.218` only matched V6, with the oracle's Caries gains gone — attributable to the GT→V6
+box-framing gap + the missing background class.
+
+`src/06-stage2-phase1c-real-boxes.ipynb` runs **Phase 1c** (built, not yet trained): retrain Stage 2 on
+**V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→foreground, <0.3→background, [0.3,0.5)→ignored;
+background subsampled ~3:1) with an added **background class** (`nc+1`), warm-started from `stage2_best.pt`.
+It scores the full V6→Stage2 pipeline (`full@0.05` headline) + the hybrid (large→V6) routing vs V6 0.2099.
+V6 (≈0.234) remains the production model.
 
 ---
 

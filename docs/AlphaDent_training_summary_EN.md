@@ -921,13 +921,19 @@ If the mild oversampling experiment does not improve the result, the next major 
 
 Possible future directions:
 
-1. **Crop or tile-based training**
-   - Train on tooth-level or region-level crops instead of full panoramic images.
-   - This may make tiny Caries lesions much larger relative to the input.
+1. **Crop or tile-based training** — TRIED as V13, FAILED (−0.11; see the V13 section).
+   - Naive global tiling fragments and drops the large objects that carry the metric. Ruled out as a
+     *global* strategy; only viable as an auxiliary small-object branch that leaves the large path alone.
 
-2. **Two-stage pipeline**
-   - Stage 1: detect teeth or suspicious regions.
-   - Stage 2: segment and classify findings inside local crops.
+2. **Two-stage detect-then-refine pipeline** — ACTIVE experiment
+   (see [`docs/small_object_research_notes.md`](small_object_research_notes.md)).
+   - Stage 1: V6 detector (tuned for recall, conf≈0.05) localizes boxes.
+   - Stage 2: a trained refiner (U-Net + ImageNet ResNet18) re-classifies + re-segments small-box
+     crops at native resolution; large boxes route straight to V6 (the V13 guard).
+   - **Status (2026-06-17):** Phase 0 oracle validated the ceiling (small Caries +0.11..+0.22, `src/04`);
+     Phase 1a gate **passed** (V6 small-Caries recall ≈0.58–0.89 @conf0.05) but Phase 1b transfer was
+     **weak** (`full@0.05`=0.182 < V6 0.210 — no background class; `src/05`). Phase 1c (`src/06`,
+     retrain on real V6 boxes + a background class, warm-started) is **built, not yet trained**.
 
 3. **Class-specific analysis**
    - Track per-class mAP after every important run.

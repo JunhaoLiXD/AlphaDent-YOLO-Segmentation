@@ -248,9 +248,16 @@ Possible directions:
    - Tiling is used only as an auxiliary branch for tiny Caries, then merged.
    - Avoids V13's failure mode (large objects fragmented and dropped).
 
-2. **Two-stage pipeline**
-   - Stage 1: detect teeth or suspicious regions.
-   - Stage 2: classify and segment local crops.
+2. **Two-stage detect-then-refine pipeline** (ACTIVE experiment — see
+   [`docs/small_object_research_notes.md`](small_object_research_notes.md))
+   - Stage 1: V6 detector (tuned for recall, conf≈0.05) localizes boxes.
+   - Stage 2: a trained refiner (U-Net + ImageNet ResNet18) re-classifies + re-segments small-box
+     crops at native resolution; large boxes route straight to V6 (the V13 guard).
+   - **Status (2026-06-17):** Phase 0 oracle validated the ceiling (small Caries +0.11..+0.22,
+     `src/04`); Phase 1a gate **passed** (V6 small-Caries recall ≈0.58–0.89 @conf0.05) but Phase 1b
+     transfer was **weak** (`full@0.05`=0.182 < V6 0.210 — no background class; `src/05`). Phase 1c
+     (`src/06`, retrain on real V6 boxes + a background class, warm-started) is **built, not yet
+     trained** — the run that decides whether this beats V6.
 
 3. **Per-class tuning**
    - Track per-class mAP after each training run.

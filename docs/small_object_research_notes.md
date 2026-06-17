@@ -1,8 +1,8 @@
 # Small-Object Research Notes — Two-Stage Detect-then-Refine
 
-> **Status: Phase 0 (oracle) RUN — direction validated (see "Phase 0 result" below).
-> Phase 1 (real Stage-1 boxes + background class) is the next experiment, not yet built.**
-> Implemented in `src/04-stage2-oracle-roi.ipynb`. Pre-registered evaluation rules are below.
+> **Status: Phase 0 (oracle) validated; Phase 1a/1b RUN (see "Phase 1a/1b result" below);
+> Phase 1c (retrain on real V6 boxes + background class) BUILT in `src/06-stage2-phase1c-real-boxes.ipynb`,
+> not yet trained.** Phase 0 = `src/04`, Phase 1a/1b = `src/05`. Pre-registered evaluation rules are below.
 
 ---
 
@@ -72,6 +72,36 @@ lesion) but **not** for Phase 1: a recall-tuned Stage 1 emits many false-positiv
 lesion, and a model that cannot say "background" will hallucinate a lesion on each → precision
 collapse. **Phase 1 therefore adds a background class** (classifier `num_classes + 1`, background
 ROIs target an empty mask), trained on hard negatives = Stage-1 boxes that don't match any GT.
+
+---
+
+## Phase 1a/1b result (2026-06-17, real Stage 1 = V6, `src/05`)
+
+Raw data in `stage2/phase1a_recall.csv` + `stage2/phase1b_pipeline.csv`.
+
+**Phase 1a — V6 localization recall (the gate): PASSED.** Class-agnostic box recall at conf=0.05:
+
+| class | n_gt | recall@IoU0.3 | recall@IoU0.5 |
+|---|---:|---:|---:|
+| Caries 1 | 62 | 0.89 | 0.74 |
+| Caries 2 | 73 | 0.73 | 0.62 |
+| Caries 3 | 33 | 0.58 | 0.36 |
+| Caries 5 | 81 | 0.80 | 0.72 |
+
+Recall **collapses at higher conf** (Caries 2/3/5 lose 40–60% going 0.05→0.25), so **Stage 1 must run
+at conf≈0.05.** The boxes for the supported small Caries exist → Stage 1 recall is not the bottleneck.
+
+**Phase 1b — transfer check (V6 boxes → Phase-0 `stage2_best.pt`): WEAK.** Aggregate Mask mAP:
+`full@0.05 = 0.182` (below V6 0.210 — no background class to reject FPs), `TPonly@0.05 = 0.218`
+(perfect-FP-rejection upper bound, ≈V6 and driven by Abrasion, not Caries). The oracle's big Caries
+gains did **not** transfer: TPonly Caries 1/2 ≈ flat vs V6, Caries 3 +0.03, Caries 5 +0.05.
+
+**Verdict:** the pre-registered "TPonly clearly beats V6 on small Caries" bar was **not cleanly met**,
+but the collapse is attributable to two *fixable* things — the **GT→V6 box-framing domain gap** (the
+Phase-0 model only ever saw tight GT boxes) and the **missing background class**. Both are exactly what
+Phase 1c changes, so Phase 1c is run to test whether the gap is the cause (decision taken with the user,
+who also fixed Stage-1 conf at 0.05). Caveat retained: small Caries are low-weight, so even a clean win
+moves the aggregate modestly — the headline is the **hybrid (large→V6)** number vs 0.2099.
 
 ---
 
@@ -210,13 +240,19 @@ These rules are fixed *before* running so a noisy number cannot retroactively ju
    if small-Caries AP there stays well above V6, Phase 1c is justified. Diagnostic, **not** a
    go/no-go test on its own.
 
-4. **Phase 1c — the real Phase 1: retrain Stage 2 on Stage-1 boxes + a background class.**
-   - Generate ROI training data from **V6's predicted boxes on the TRAIN split** (not GT boxes):
-     boxes that match a GT → that lesion class + its mask; boxes that match nothing → **background**
-     class + empty mask (hard negatives).
-   - Add a **background class** to the classifier (`num_classes + 1`); warm-start from
-     `stage2_best.pt` (the GT-trained features are a good init).
-   - Evaluate the full V6→Stage2 pipeline on val with the comparable metric + the Hybrid routing.
+4. **Phase 1c — the real Phase 1: retrain Stage 2 on Stage-1 boxes + a background class.** → BUILT in
+   **`src/06-stage2-phase1c-real-boxes.ipynb`** (not yet trained). Implemented decisions:
+   - ROI training data from **V6's predicted boxes on the TRAIN split** at **conf=0.05**: box-IoU **≥0.5**
+     to a GT → that lesion class + the GT mask (rasterized in the V6-box ROI frame); IoU **<0.3** →
+     **background** class + empty mask; the **[0.3, 0.5) band is IGNORED** (ambiguous). Background
+     subsampled to **~3:1** vs foreground.
+   - **Background class** added (`num_classes`, i.e. `nc+1` outputs); warm-started from `stage2_best.pt`
+     (encoder/decoder/seg head copied; classifier head grown nc→nc+1, overlapping rows copied).
+     Seg loss applied to foreground only; CE (incl. background) to all.
+   - Evaluates the full V6→Stage2 pipeline on val with the comparable metric (`full@0.05` = headline,
+     `TPonly@0.05` = refinement ceiling) + the **hybrid (large→V6, small→Stage2)** routing.
+   - **Go/no-go (set with user):** hybrid mAP > V6 (0.2099) beyond the ~0.003 noise band → integrate
+     into a submission; otherwise Stage 2 stays a research result and V6 remains the submission model.
 
 5. **(Parallel, low effort) SAHI two-path inference** with V6 (slices for small + full image for
    large + NMS) — a cheap alternative probe of the small-object recall side; see
