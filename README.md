@@ -46,15 +46,24 @@ AlphaDent/
 │   ├── 02-alphadent-yolo-seg-submission.ipynb          # V13: tiled inference + submission
 │   ├── 03-alphadent-val-map-eval.ipynb                 # comparable full-image mAP (V13 vs V6, same code)
 │   ├── 04-stage2-oracle-roi.ipynb                      # Phase 0 oracle for two-stage detect-then-refine
-│   └── 05-stage1-recall-and-transfer.ipynb             # Phase 1a/1b: real V6 Stage-1 recall + transfer check
+│   ├── 05-stage1-recall-and-transfer.ipynb             # Phase 1a/1b: real V6 Stage-1 recall + transfer check
+│   └── 06-stage2-phase1c-real-boxes.ipynb              # Phase 1c: retrain Stage 2 on real V6 boxes + bg class (FAILED)
 ├── stage2/                     # Stage-2 (detect-then-refine) run outputs
 │   ├── stage2_history.csv      # Phase 0 per-epoch training curve
-│   └── stage2_results.csv      # Phase 0 per-class oracle AP vs V6
+│   ├── stage2_results.csv      # Phase 0 per-class oracle AP vs V6
+│   ├── phase1a_recall.csv      # Phase 1a V6-as-Stage-1 localization recall
+│   ├── phase1b_pipeline.csv    # Phase 1b transfer-check pipeline AP
+│   ├── phase1c_pipeline.csv    # Phase 1c per-class pipeline AP (FAILED, no-go)
+│   └── stage2_p1c_history.csv  # Phase 1c per-epoch training curve
+├── models/                     # Local trained checkpoints — NOT tracked in git (see .gitignore)
+│   ├── version6_best.pt        # V6 detector (production model, ≈0.234)
+│   ├── version10_best.pt       # V10 detector (≈tied with V6)
+│   └── stage2_p1c_best.pt      # Phase 1c Stage-2 refiner (research result)
 └── tools/
     └── tile_yolo_seg.py        # V13 canonical tiling library (mirrored inline into 01 & 02)
 ```
 
-> **Not tracked in git:** dataset images/labels, model weight files (`*.pt`), YOLO training output directories (`runs/`).
+> **Not tracked in git:** dataset images/labels, model weight files (`*.pt`, incl. the `models/` folder), YOLO training output directories (`runs/`).
 
 ---
 
@@ -157,11 +166,19 @@ was **weak**: `full@0.05 = 0.182` (below V6, no background class to reject FPs) 
 `TPonly@0.05 = 0.218` only matched V6, with the oracle's Caries gains gone — attributable to the GT→V6
 box-framing gap + the missing background class.
 
-`src/06-stage2-phase1c-real-boxes.ipynb` runs **Phase 1c** (built, not yet trained): retrain Stage 2 on
+`src/06-stage2-phase1c-real-boxes.ipynb` runs **Phase 1c** (trained 2026-06-18): retrain Stage 2 on
 **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→foreground, <0.3→background, [0.3,0.5)→ignored;
 background subsampled ~3:1) with an added **background class** (`nc+1`), warm-started from `stage2_best.pt`.
-It scores the full V6→Stage2 pipeline (`full@0.05` headline) + the hybrid (large→V6) routing vs V6 0.2099.
-V6 (≈0.234) remains the production model.
+
+**Phase 1c result (`stage2/phase1c_pipeline.csv`, `stage2_p1c_history.csv`) — FAILED, NO-GO.** Every
+pipeline variant scored **below V6 0.2099**: `full@0.05` = 0.157, `TPonly@0.05` (perfect FP rejection,
+the ceiling) = 0.178, and the derived hybrid (large→V6, small→Stage2) ≈ 0.203 — all inside or below the
+noise band. The oracle's Caries gains **evaporated on real boxes** (TPonly Caries 1/2/5 = 0.079/0.061/0.107
+vs V6 0.120/0.085/0.110, vs oracle 0.234/0.259/0.329). Because `TPonly` removes false positives entirely
+and still ≈V6, the whole oracle→real gap is **Stage-1 box quality**, not Stage-2 capability: Stage 1 must
+run at conf≈0.05 to recall small Caries, but those boxes are too loose to frame the ROI like the tight GT
+boxes the oracle used. **The two-stage detect-then-refine line is closed; V6 (≈0.234) remains the
+production model.** Next direction is all-class / capacity levers (TTA, V6+V10 ensemble, larger backbone).
 
 ---
 

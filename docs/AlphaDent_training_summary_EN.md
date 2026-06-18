@@ -925,15 +925,19 @@ Possible future directions:
    - Naive global tiling fragments and drops the large objects that carry the metric. Ruled out as a
      *global* strategy; only viable as an auxiliary small-object branch that leaves the large path alone.
 
-2. **Two-stage detect-then-refine pipeline** — ACTIVE experiment
+2. **Two-stage detect-then-refine pipeline** — CLOSED, NO-GO
    (see [`docs/small_object_research_notes.md`](small_object_research_notes.md)).
    - Stage 1: V6 detector (tuned for recall, conf≈0.05) localizes boxes.
    - Stage 2: a trained refiner (U-Net + ImageNet ResNet18) re-classifies + re-segments small-box
      crops at native resolution; large boxes route straight to V6 (the V13 guard).
-   - **Status (2026-06-17):** Phase 0 oracle validated the ceiling (small Caries +0.11..+0.22, `src/04`);
-     Phase 1a gate **passed** (V6 small-Caries recall ≈0.58–0.89 @conf0.05) but Phase 1b transfer was
-     **weak** (`full@0.05`=0.182 < V6 0.210 — no background class; `src/05`). Phase 1c (`src/06`,
-     retrain on real V6 boxes + a background class, warm-started) is **built, not yet trained**.
+   - **Status (2026-06-18): FAILED.** Phase 0 oracle validated the *ceiling* (small Caries +0.11..+0.22
+     with perfect GT boxes, `src/04`), but the real pipeline never reached it. Phase 1a gate passed
+     (V6 small-Caries recall ≈0.58–0.89 @conf0.05); Phase 1b transfer weak; **Phase 1c** (`src/06`,
+     retrain on real V6 boxes + a background class, warm-started, trained 2026-06-18) scored **below V6
+     0.2099 in every variant** — `full@0.05`=0.157, `TPonly@0.05`=0.178 (perfect-FP ceiling), hybrid≈0.203.
+     The oracle's Caries gains evaporated on real boxes; the entire gap is **Stage-1 box quality**
+     (recall-vs-localization tension at conf≈0.05), not Stage-2 capability. **Line closed; V6 stays
+     production.** Next: all-class/capacity levers — TTA, V6+V10 ensemble, larger backbone.
 
 3. **Class-specific analysis**
    - Track per-class mAP after every important run.

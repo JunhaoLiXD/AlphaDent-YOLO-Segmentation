@@ -1,8 +1,11 @@
 # Small-Object Research Notes — Two-Stage Detect-then-Refine
 
-> **Status: Phase 0 (oracle) validated; Phase 1a/1b RUN (see "Phase 1a/1b result" below);
-> Phase 1c (retrain on real V6 boxes + background class) BUILT in `src/06-stage2-phase1c-real-boxes.ipynb`,
-> not yet trained.** Phase 0 = `src/04`, Phase 1a/1b = `src/05`. Pre-registered evaluation rules are below.
+> **Status (2026-06-18): LINE CLOSED — NO-GO.** Phase 0 (oracle) validated the ceiling, but
+> Phase 1c (retrain on real V6 boxes + background class, `src/06`) **FAILED**: every pipeline
+> variant scores **below V6 0.2099** even at the perfect-FP ceiling, because the oracle's gains came
+> from *perfect boxes* that a real Stage 1 cannot produce (see "Phase 1c result" below). **V6 (≈0.234)
+> remains the production/submission model.** Phases: Phase 0 = `src/04`, Phase 1a/1b = `src/05`,
+> Phase 1c = `src/06`. Pre-registered evaluation rules are below; they were honored at every step.
 
 ---
 
@@ -102,6 +105,62 @@ Phase-0 model only ever saw tight GT boxes) and the **missing background class**
 Phase 1c changes, so Phase 1c is run to test whether the gap is the cause (decision taken with the user,
 who also fixed Stage-1 conf at 0.05). Caveat retained: small Caries are low-weight, so even a clean win
 moves the aggregate modestly — the headline is the **hybrid (large→V6)** number vs 0.2099.
+
+---
+
+## Phase 1c result (2026-06-18, retrain on real V6 boxes + background class, `src/06`) — FAILED, NO-GO
+
+Stage 2 retrained on V6's TRAIN-split predicted boxes at conf=0.05 (IoU≥0.5→fg, <0.3→bg, [0.3,0.5)
+ignored; bg ~3:1) with a background class (`nc+1`), warm-started from `stage2_best.pt`. 30 epochs.
+Raw data: `stage2/phase1c_pipeline.csv` + `stage2/stage2_p1c_history.csv`.
+
+**Training (`stage2_p1c_history.csv`):** `cls` loss 0.77→0.05 (converged, no crash), but the proxy
+metrics sit **below the Phase-0 oracle** — `val_acc` ~0.70–0.73 (9 classes + bg), `val_fg_mask_iou`
+~0.79 (oracle reached 0.813). Lower-quality input (real V6 boxes vs tight GT boxes) caps Stage 2's
+refinement from the start.
+
+**Aggregate Mask mAP50-95 (9 classes, same metric, V6 = 0.2099):**
+
+| variant | what it is | aggregate mAP | vs V6 |
+|---|---|---:|---:|
+| `full@0.05` | all V6 boxes incl. FP (headline) | 0.157 | −0.053 |
+| `full@0.25` | higher conf | 0.146 | −0.063 |
+| `TPonly@0.05` | only boxes matching a GT = perfect FP rejection (ceiling) | 0.178 | −0.032 |
+| hybrid (derived) | large→V6 + TPonly Caries (ceiling) | ≈0.203 | −0.007 |
+| hybrid (derived) | large→V6 + full@0.05 Caries (realistic) | ≈0.196 | −0.014 |
+
+**Every variant is below V6, including the perfect-FP-rejection ceiling.** The hybrid rows are derived
+from the per-class table (V6's large classes Abrasion/Filling/Crown + Stage-2 Caries); both fall inside
+or below the noise band relative to V6, so the **go/no-go (hybrid > V6 + 0.003) is NOT met → NO-GO.**
+
+**The decisive failure — the oracle's Caries gains evaporated on real boxes, even at the ceiling:**
+
+| class | Phase 0 oracle | Phase 1c `TPonly@0.05` | V6 |
+|---|---:|---:|---:|
+| Caries 1 | 0.234 | 0.079 | **0.120** |
+| Caries 2 | 0.259 | 0.061 | **0.085** |
+| Caries 3 | 0.202 | 0.018 | 0.012 |
+| Caries 5 | 0.329 | 0.107 | **0.110** |
+
+The +0.11..+0.22 oracle headroom is **gone** — Stage 2 on real Caries boxes only matches or trails V6.
+Crown also collapsed (`TPonly` 0.368 vs V6 0.631), but Crown is "large" so the hybrid routes it to V6;
+it is not the deciding factor.
+
+**Diagnosis — the entire oracle→real gap is Stage-1 box quality, not Stage-2 capability.** `TPonly`
+removes false positives completely and still ≈V6, so the missing-background-class issue is *not* the
+binding constraint (the bg class did help: `full` 0.157 → `TPonly` 0.178 shows FPs cost ~0.02). The
+binding constraint is the **recall-vs-localization tension**: Phase 1a showed Stage 1 must run at
+conf≈0.05 to recall small Caries, but those boxes are loose (recall@IoU0.5 well below @IoU0.3), so the
+ROI is mis-framed (off-center / wrong scale / clipped) versus the tight GT boxes the oracle enjoyed.
+Reaching the oracle needs near-perfect boxes; a real detector at this object size cannot give them, and
+making the detector better at tiny-object localization IS the plateaued problem (V11/V12/V13).
+
+**Conclusion: the two-stage detect-then-refine line is CLOSED.** The ceiling is real but unreachable
+with a real Stage 1. V6 (≈0.234) remains the production model. Next direction pivots off small objects
+to all-class / capacity levers (TTA, V6+V10 ensemble, larger backbone) — see the recommended-order
+update below and `docs/AlphaDent_training_summary_EN.md`. **Optional closure diagnostic** (not yet run):
+bin V6 TP boxes by IoU-with-GT and plot Stage-2 Caries AP per bin — it should climb toward the oracle
+only in the IoU≳0.8 bin, formally proving box quality is the sole lever.
 
 ---
 
@@ -253,6 +312,10 @@ These rules are fixed *before* running so a noisy number cannot retroactively ju
      `TPonly@0.05` = refinement ceiling) + the **hybrid (large→V6, small→Stage2)** routing.
    - **Go/no-go (set with user):** hybrid mAP > V6 (0.2099) beyond the ~0.003 noise band → integrate
      into a submission; otherwise Stage 2 stays a research result and V6 remains the submission model.
+   - **OUTCOME (2026-06-18): FAILED → NO-GO.** All variants below V6 even at the perfect-FP ceiling
+     (`full@0.05`=0.157, `TPonly@0.05`=0.178, hybrid≈0.203); the oracle's Caries gains evaporated on
+     real boxes. The gap is **Stage-1 box quality** (recall-vs-localization tension at conf≈0.05), not
+     Stage-2 capability. **Two-stage line closed; V6 stays production.** See "Phase 1c result" above.
 
 5. **(Parallel, low effort) SAHI two-path inference** with V6 (slices for small + full image for
    large + NMS) — a cheap alternative probe of the small-object recall side; see

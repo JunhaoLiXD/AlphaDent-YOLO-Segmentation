@@ -30,6 +30,9 @@ ENV/
 *.pkl
 *.joblib
 
+# ─── Local model checkpoints folder (V6/V10/Stage-2 .pt, not tracked) ──
+models/
+
 # ─── YOLO training output directories ─────────────────────
 runs/
 wandb/

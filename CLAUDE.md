@@ -314,3 +314,36 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - **Status**: implemented, **not yet trained**. README + `docs/small_object_research_notes.md` (Phase
   1a/1b result section, Phase 1c built in recommended-order item 4, status banner) + project memory
   updated. Awaiting the Kaggle run → `phase1c_pipeline.csv` / `phase1c_summary.json`.
+
+### 2026-06-18 — Phase 1c TRAINED & FAILED (no-go); two-stage line closed; docs updated
+- **Run**: user ran `src/06` and added `stage2/phase1c_pipeline.csv` + `stage2/stage2_p1c_history.csv`.
+  30 epochs; `cls` loss 0.77→0.05 (converged, no crash) but the proxy metrics are **below the oracle**:
+  `val_acc` ~0.70–0.73 (9 classes + bg), `val_fg_mask_iou` ~0.79 (oracle reached 0.813). Lower input
+  quality (real V6 boxes vs tight GT boxes) caps Stage 2's refinement quality from the start.
+- **Result (aggregate Mask mAP50-95 over the 9 classes, same metric, V6=0.2099):**
+  `full@0.05 = 0.157`, `full@0.25 = 0.146`, `TPonly@0.05 = 0.178` (perfect-FP ceiling), and the
+  **hybrid (large→V6, small→Stage2)** I derived from the per-class rows ≈ **0.203** (using TPonly
+  Caries, the ceiling) / ≈ **0.196** (using full@0.05 Caries, realistic). **Every variant < V6 0.2099.**
+- **Decisive failure: the oracle's Caries gains evaporated on real boxes — even at the TPonly ceiling.**
+  TPonly Caries vs V6: Caries1 0.079 vs 0.120, Caries2 0.061 vs 0.085, Caries5 0.107 vs 0.110, Caries3
+  0.018 vs 0.012 (Caries4/6 ~0, noise). Compare the oracle (0.234/0.259/0.329/0.202) — the +0.11..+0.22
+  oracle headroom is **gone** once boxes are real. Crown also collapsed (TPonly 0.368 vs V6 0.631), but
+  Crown is "large" so the hybrid routes it to V6 anyway — not the deciding factor.
+- **Go/no-go → NO-GO.** hybrid (≤0.203) does not clear V6 0.2099 beyond the 0.003 noise band, even at the
+  optimistic ceiling. **Stage 2 stays a research result; V6 (≈0.234) remains the production/submission model.**
+- **Diagnosis (confirms the user's framing).** The whole oracle→real gap is **Stage-1 box quality**, not
+  Stage-2 capability or FP rejection: TPonly removes FPs entirely and still ≈V6. The cause is the
+  recall-vs-localization tension — Stage 1 must run at conf≈0.05 to recall small Caries (Phase 1a), but
+  those boxes are loose (Phase 1a matched recall@IoU0.5 well below @IoU0.3), so the ROI is mis-framed
+  (off-center / wrong scale / clipped) vs the tight GT boxes the oracle enjoyed. You can only reach the
+  oracle with near-perfect boxes, which a real detector at this object size cannot give — and improving
+  the detector IS the plateaued small-object problem (V11/V12/V13). So the two-stage **detect-then-refine
+  line is closed**: oracle ceiling validated, but unreachable with a real Stage 1.
+- **Next direction**: pivot off small objects to **all-class / capacity levers** (consistent with the
+  mAP-weight reframing): cheap first — inference-time **TTA** and a **V6+V10 ensemble** (zero training);
+  then a **larger backbone (yolov8m/l-seg @ imgsz=768)** as a single-variable run. Optional closure
+  diagnostic before abandoning: bin V6 TP boxes by IoU-with-GT and plot Stage-2 Caries AP per bin —
+  expect it to climb toward the oracle only in the IoU≳0.8 bin (which a real detector rarely produces).
+- **Docs updated**: README (Phase 1c paragraph → trained/failed), `docs/small_object_research_notes.md`
+  (status banner + Phase 1c result section + recommended-order item 4 outcome), EN/CN experiment logs
+  (two-stage status line), and the project memory.
