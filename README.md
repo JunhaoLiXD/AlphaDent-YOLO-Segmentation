@@ -30,7 +30,8 @@ AlphaDent/
 │   ├── AlphaDent_training_summary_EN.md      # Detailed experiment log (English)
 │   ├── AlphaDent_training_summary_CN.md      # Detailed experiment log (Chinese)
 │   ├── future_loss_modification_notes.md     # Research notes: loss ideas (unimplemented)
-│   └── small_object_research_notes.md        # Research notes: two-stage detect-then-refine
+│   ├── small_object_research_notes.md        # Research notes: two-stage detect-then-refine (CLOSED)
+│   └── medsam_refine_research_notes.md       # Research notes: keep V6 boxes, swap mask via MedSAM
 ├── results/
 │   ├── version5_results.csv    # Training metrics per epoch, V5
 │   ├── version6_results.csv    # V6
@@ -47,7 +48,8 @@ AlphaDent/
 │   ├── 03-alphadent-val-map-eval.ipynb                 # comparable full-image mAP (V13 vs V6, same code)
 │   ├── 04-stage2-oracle-roi.ipynb                      # Phase 0 oracle for two-stage detect-then-refine
 │   ├── 05-stage1-recall-and-transfer.ipynb             # Phase 1a/1b: real V6 Stage-1 recall + transfer check
-│   └── 06-stage2-phase1c-real-boxes.ipynb              # Phase 1c: retrain Stage 2 on real V6 boxes + bg class (FAILED)
+│   ├── 06-stage2-phase1c-real-boxes.ipynb              # Phase 1c: retrain Stage 2 on real V6 boxes + bg class (FAILED)
+│   └── 07-medsam-mask-refine.ipynb                     # MedSAM Phase 0: keep V6 boxes, swap mask (zero-training)
 ├── stage2/                     # Stage-2 (detect-then-refine) run outputs
 │   ├── stage2_history.csv      # Phase 0 per-epoch training curve
 │   ├── stage2_results.csv      # Phase 0 per-class oracle AP vs V6

@@ -77,7 +77,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   what changed, why, the best-epoch metrics, the delta vs the prior best, and the conclusion.
 - Keep `README.md`'s history table and "current best" in sync with the experiment log.
 - Use `docs/future_loss_modification_notes.md` for unimplemented loss ideas (focal / class-weighted BCE / Tversky); mark them clearly as research notes until coded.
-- Use `docs/small_object_research_notes.md` for the unimplemented two-stage detect-then-refine plan (YOLO Stage 1 → high-res ROI → trained Stage 2); also research notes until coded.
+- Use `docs/small_object_research_notes.md` for the two-stage detect-then-refine plan (YOLO Stage 1 → high-res ROI → trained Stage 2) — now **CLOSED/NO-GO** after Phase 1c (kept as a record).
+- Use `docs/medsam_refine_research_notes.md` for the MedSAM mask-refinement plan (keep V6 boxes/class/score, swap the coarse YOLO mask for a MedSAM mask to lift large-class IoU); research notes until coded, Phase 0 is zero-training.
 
 ## Reminders
 
@@ -347,3 +348,30 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - **Docs updated**: README (Phase 1c paragraph → trained/failed), `docs/small_object_research_notes.md`
   (status banner + Phase 1c result section + recommended-order item 4 outcome), EN/CN experiment logs
   (two-stage status line), and the project memory.
+
+### 2026-06-18 — New direction picked + `docs/medsam_refine_research_notes.md` + `src/07` built
+- **Direction (with user)**: after the two-stage line closed, the user's framing — YOLO is
+  detection-first, so a mask is gated by box confidence — led to a new, *different* lever: keep V6's
+  **box + class + confidence**, only **swap the coarse YOLO mask for a MedSAM (box-prompted) mask**.
+  Targets **large-class mask IoU** (where the mAP weight is and where V6's boxes are trustworthy),
+  NOT small-object localization — so it is explicitly not a repeat of Phase 1c.
+- **New research note `docs/medsam_refine_research_notes.md`**: motivation (YOLO proto masks are
+  coarse at `imgsz/4`; mAP50-95 is IoU-strict), the V6+MedSAM pipeline (no scorer/instance-split to
+  train — reuse V6 conf), Phase 0 = zero-training mask swap, pre-registered eval (headline = large
+  classes), risks (MedSAM domain gap on dental pano X-ray; SAM segmenting the whole tooth), optional
+  Phase 1 = decoder-only/LoRA fine-tune *only if* Phase 0's domain gap blocks it.
+- **`src/07-medsam-mask-refine.ipynb` BUILT (23 cells, eval-only, Kaggle-self-contained; built via a
+  one-off `tools/_build_src07.py`, deleted; all 11 code cells compile).** Inputs: `version6_best.pt`
+  + a MedSAM ViT-B checkpoint (auto-detected, with MANUAL overrides). MedSAM via `segment_anything`
+  `vit_b` registry; inference = min-max-normalise 1024² → `image_encoder` → box-prompted
+  `mask_decoder` (multimask off). `USE_ROI_CROP` knob (default True = crop padded ROI per box for
+  small-lesion resolution; False = full-image, one encode/image). **All variants scored by the SAME
+  in-notebook matcher reused from src/04** so MedSAM-vs-YOLO is a pure mask-only delta:
+  `v6_native@{0.05,0.25}` (baseline), `v6box_medsam@{0.05,0.25}` (real pipeline), `TPonly_*@0.05`,
+  `oracle_medsam` (GT-box ceiling). Saves `medsam_phase0_results.csv` / `medsam_phase0_summary.json`.
+- **Go/no-go**: `v6box_medsam@0.05` beats `v6_native@0.05` on the LARGE classes beyond ~0.003 (no
+  aggregate regression) → pursue a submission path; else optional decoder-only fine-tune, or stop.
+  V6 (≈0.234) stays production until this clears.
+- **Status**: implemented, **not yet run**. README structure + the research note's status banner /
+  "Phase 0 notebook" section + project memory updated. Awaiting the Kaggle run →
+  `medsam_phase0_results.csv` / `medsam_phase0_summary.json`.

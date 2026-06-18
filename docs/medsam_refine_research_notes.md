@@ -1,0 +1,179 @@
+# MedSAM Mask-Refinement Research Notes — keep V6 localization, replace the mask
+
+> **Status (2026-06-18): Phase 0 BUILT in `src/07-medsam-mask-refine.ipynb`, not yet run.** Zero
+> training — needs only `version6_best.pt` + a MedSAM ViT-B checkpoint as Kaggle inputs. No
+> retraining of V6 or MedSAM in Phase 0.
+
+---
+
+## Motivation — attack mask IoU on the LARGE classes, not small-object recall
+
+The full-image YOLOv8s-seg approach is plateaued at ~0.234 Mask mAP50-95. Two things are now
+established (see `docs/small_object_research_notes.md` and the V13 reframing):
+
+1. **mAP weight ≠ object count.** mAP is per-class-averaged and carried by the large/common classes
+   (V6: Abrasion ~0.65, Crown ~0.63, Filling ~0.28), **not** the rare tiny Caries. The score is
+   bottlenecked by the large classes being near saturation.
+2. **The two-stage detect-then-refine line is CLOSED.** Phase 1c failed because it tried to fix
+   *small-Caries localization* (low weight) and depended on Stage-1 **box quality**, which a real
+   detector cannot deliver for tiny objects.
+
+This note targets a *different* lever, the one that actually carries the metric:
+
+> **YOLO-seg's prototype masks are coarse** — the mask proto runs at `imgsz/4` (768 → 192×192).
+> `mAP50-95` is IoU-strict (averaged over IoU 0.50…0.95). The large classes are **localized well by
+> V6** (their boxes are accurate), so any IoU left on the table is in the **mask boundary quality**,
+> not the box. Replacing the coarse YOLO mask with a high-quality mask from a promptable segmenter
+> (**MedSAM**) could lift the large-class IoU in the strict 0.7–0.95 band → directly move the mAP.
+
+**Why this is not Phase 1c again (the key distinction):**
+
+| | Phase 1c (FAILED) | MedSAM refine (this note) |
+|---|---|---|
+| What it tries to fix | small-Caries **localization** | large-class **mask IoU** |
+| mAP weight of the target | low (rare Caries) | **high (Abrasion/Crown/Filling)** |
+| Depends on box **quality**? | yes — and tiny-object boxes are bad → it died | **no** — large-class boxes are already good, and SAM is robust to loose box prompts |
+| Needs training? | yes (retrain Stage 2) | **no** (Phase 0 is zero-training) |
+
+We are refining the masks where the boxes are *trustworthy*, which is exactly where Phase 1c was not.
+
+---
+
+## The pipeline — V6 does localization + class + score; MedSAM does the mask only
+
+V6 is kept **frozen and unchanged**. Each detection becomes one MedSAM call:
+
+| Component | Source | Trained? |
+|---|---|---|
+| Box (location) | V6 (`version6_best.pt`) | no — as-is |
+| Class (`class_id`) | V6 | no — as-is |
+| Confidence (mAP ranking) | **V6's box confidence, reused directly** | no — no separate scorer needed |
+| Fine instance mask | **MedSAM**, prompted by the V6 box | no — released pretrained weights |
+
+1. Run V6 on the (val) image → boxes + classes + confidences (the V6 mask is **discarded**).
+2. For each box, prompt MedSAM with that box → one binary instance mask.
+3. Place the mask back in full-image coordinates (reuse the ROI↔full-image bookkeeping discipline
+   from `tools/tile_yolo_seg.py::untile_polygon` / the `src/04` crop-offset placement).
+4. Keep V6's `class_id` and `confidence` for that instance; **swap in the MedSAM mask**.
+5. Evaluate with the comparable `src/03` self-contained mask-mAP, per class, vs V6 re-scored on the
+   same images (V6 = 0.2099 in that metric).
+
+Two clean structural wins over the semantic-segmentation alternative:
+- **No instance-separation step** — one box prompt → one instance mask.
+- **No per-instance scorer to train** — V6's confidence already ranks the instances for mAP.
+
+---
+
+## Phase 0 FIRST — zero-training mask swap (the diagnostic)
+
+**Build this first. It requires no training of anything.** Inputs: `version6_best.pt` + a downloaded
+MedSAM checkpoint (ViT-B). It answers the single question that gates the whole idea:
+
+> Holding V6's boxes/classes/scores fixed, does swapping the YOLO mask for a MedSAM mask **raise the
+> Mask mAP50-95 of the large classes** (Abrasion/Crown/Filling) on the comparable metric?
+
+- **Upper-bound variant (oracle prompt):** prompt MedSAM with the **GT boxes** to see the ceiling of
+  "perfect localization + MedSAM mask" — decouples MedSAM mask quality from V6 box quality, the same
+  oracle discipline as Stage-2 Phase 0.
+- **Real variant:** prompt MedSAM with **V6's predicted boxes** (the real pipeline number).
+- Report both, per class, against V6 re-scored.
+
+If even the GT-box (oracle) MedSAM masks do **not** beat V6 on the large classes, the domain gap is
+fatal and we stop (or go straight to the optional fine-tune below). If they do, the real-box variant
+tells us how much survives, and Phase 0 has earned a Phase 1.
+
+---
+
+## Design knobs (all Phase-0, none require training)
+
+1. **Prompt type = box.** V6 outputs boxes; box prompts are more stable than points and tolerate
+   loose framing. (Optionally add the box-center point as an extra positive prompt — ablation.)
+2. **Full image vs ROI crop.** SAM internally resizes the input to 1024², so a tiny lesion in a full
+   panoramic image has almost no effective resolution. **Recommended: crop the box ROI (with context
+   padding) from the original-resolution image and run MedSAM on the crop**, then map the mask back —
+   the same context-vs-effective-resolution trade-off as the Stage-2 padding ablation
+   (`PAD_FACTOR` 1.0 / 1.5 / 2.0). For large boxes this matters less; for small ones it is decisive.
+3. **MedSAM multimask + selection.** SAM can emit several mask hypotheses per prompt; pick by SAM's
+   own predicted IoU, or by max IoU with the discarded YOLO mask as a sanity anchor (diagnostic only).
+4. **Mask post-processing.** Keep the largest connected component per prompt; optionally fill holes.
+   Do **not** merge across prompts (each prompt is one instance).
+5. **Routing (optional, mirrors the V13 guard).** If MedSAM helps large boxes but hurts a class,
+   route that class back to the V6 mask — a per-class max, decided *after* seeing Phase 0 numbers,
+   never tuned on the test set.
+
+---
+
+## Evaluation discipline (pre-registered, same rules as the Stage-2 notes)
+
+1. **Decision metric = the comparable `src/03` full-image mask-mAP**, per class, vs V6 re-scored on
+   the *same* images (V6 = 0.2099 there). Never MedSAM's own IoU or ROI-level numbers.
+2. **The headline is the LARGE classes** (Abrasion/Crown/Filling) — that is where the mAP weight and
+   the hypothesis live. Small Caries are reported but are low-weight and noisy (Caries 4 n=4 /
+   Caries 6 n=5 are noise; only Caries 1/2/5 n≈62/73/81 are usable as a trend).
+3. **Noise band:** treat Mask mAP50-95 differences under ~0.003 as noise.
+4. **Go/no-go (set before running):** the **real-box** MedSAM pipeline mask-mAP must beat V6 0.2099
+   **beyond the 0.003 band** to be worth a submission. The GT-box (oracle) number is an upper bound
+   and informs the decision but does not by itself justify "continue".
+
+---
+
+## Risks / pitfalls
+
+- **Domain gap.** MedSAM is trained mostly on CT/MRI/endoscopy/pathology; dental panoramic X-ray is
+  partially out-of-distribution. Zero-shot masks may underperform — this is exactly what Phase 0
+  measures, and the optional fine-tune below is the fallback.
+- **Loose/over-confident SAM masks.** SAM tends to segment the most salient object in the box; for a
+  box that contains tooth + lesion it may segment the whole tooth, not the finding. Watch the large
+  classes (Crown especially) for this; the ROI crop + multimask selection mitigate it.
+- **Coordinate bookkeeping.** ROI→full-image mask mapping must be exact (reuse the unit-tested
+  `untile_polygon` round-trip discipline).
+- **Per-instance score is borrowed, not re-estimated.** Keeping V6's confidence is the right default,
+  but if MedSAM occasionally produces a great mask on a low-conf box (or vice-versa), the ranking is
+  suboptimal. Acceptable for Phase 0; revisit only if it clearly costs mAP.
+- **Expectation management.** The realistic prize is a modest lift on the large classes' strict-IoU
+  AP — not a jump. But unlike the small-Caries effort, this is where the points actually are.
+
+---
+
+## Optional Phase 1 — lightweight MedSAM fine-tune (only if Phase 0's domain gap is the blocker)
+
+If Phase 0 shows MedSAM masks are good in shape but systematically off on dental X-ray (a domain gap,
+not a localization failure), fine-tune **only the mask decoder** (or LoRA adapters) on the train split
+with (box prompt → GT mask) pairs. Encoder frozen, cheap, small-data-safe. Re-run the Phase-0 eval.
+This is the *only* training step in the whole plan, and it is conditional on Phase 0.
+
+---
+
+## Phase 0 notebook — BUILT (`src/07-medsam-mask-refine.ipynb`, 23 cells, not yet run)
+
+- **Inputs (Kaggle):** `version6_best.pt` (auto-detected by the `version6` keyword, MedSAM/stage2
+  excluded so they never collide) + a MedSAM ViT-B checkpoint (`medsam_vit_b.pth`, auto-detected by
+  the `medsam`/`sam_vit_b` keyword). `MANUAL_V6_PATH` / `MANUAL_MEDSAM_PATH` overrides in §4.
+- Kaggle-self-contained, **evaluation-only / zero-training**; new notebook (not editing 01–06).
+- MedSAM loaded into the `segment_anything` `vit_b` registry; inference = min-max-normalise the 1024²
+  image → `image_encoder` → box-prompted `mask_decoder` (`multimask_output=False`). Two paths via the
+  `USE_ROI_CROP` knob: ROI-crop per box (default, restores effective resolution for small lesions) or
+  full-image (one encode per image).
+- **Clean apples-to-apples:** every variant is scored with the SAME in-notebook matcher (reused from
+  src/04: `gt_local_mask` → `iou_local` → 10 IoU thr → `ap_101`). Variants: `v6_native@{0.05,0.25}`
+  (V6 boxes + V6 masks = the in-notebook baseline), `v6box_medsam@{0.05,0.25}` (V6 boxes + MedSAM
+  masks = the real pipeline), `TPonly_*@0.05` (perfect FP rejection), `oracle_medsam` (GT boxes +
+  MedSAM masks = ceiling). The headline is `v6box_medsam` − `v6_native` (mask is the only change),
+  reported per class with a large-class (Abrasion/Crown/Filling) aggregate.
+- Saves `medsam_phase0_results.csv` + `medsam_phase0_summary.json` to `/kaggle/working`; archive into
+  the repo `stage2/` (or a new `medsam/`) folder alongside the other results.
+- **Go/no-go:** `v6box_medsam@0.05` beats `v6_native@0.05` on the large classes beyond the ~0.003
+  band (and no aggregate regression) → pursue a submission path; else consider the optional
+  decoder-only fine-tune below, or stop.
+
+---
+
+## Cross-references
+
+- The closed two-stage line and the mAP-weight reframing this builds on:
+  `docs/small_object_research_notes.md`, README, and `docs/AlphaDent_training_summary_EN.md` §3.7.
+- Comparable full-image mask-mAP harness to reuse: `src/03-alphadent-val-map-eval.ipynb`.
+- ROI crop + mask placement discipline to reuse: `src/04-stage2-oracle-roi.ipynb` and
+  `tools/tile_yolo_seg.py::untile_polygon`.
+- MedSAM (external): Ma et al., "Segment Anything in Medical Images", Nature Communications 2024;
+  base model SAM — Kirillov et al., "Segment Anything", ICCV 2023.
