@@ -118,8 +118,9 @@ with standard BCE.  Recommend adding as a soft regularisation term
 
 ## Recommended Experiment Order
 
-1. **Clean copy-paste ablation first** (`experiments/train_small_object_friendly.py`,
-   but with `mosaic=1.0` kept on) — no loss change, lower risk. NB: V11 already ran copy-paste
+1. **Clean copy-paste ablation first** (the V11 Plan-D template `experiments/train_small_object_friendly.py`
+   was removed in the 2026-06-24 cleanup — re-derive it from `src/01`, this time with `mosaic=1.0` kept
+   on) — no loss change, lower risk. NB: V11 already ran copy-paste
    *with mosaic disabled* and regressed (−0.020); the mosaic removal, not copy-paste, was the
    likely cause, so copy-paste still needs a clean test with mosaic on before any verdict.
 

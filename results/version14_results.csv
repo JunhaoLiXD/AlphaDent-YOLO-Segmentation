@@ -1,0 +1,64 @@
+variant,class,n_gt,AP,v6_ref_AP_src03
+v6_native@0.05,Abrasion,408,0.6180505526660036,0.6471
+v6_native@0.05,Filling,186,0.25960784179343105,0.2799
+v6_native@0.05,Crown,19,0.6037453959392467,0.6313
+v6_native@0.05,Caries 1 class,62,0.10760807061161029,0.1195
+v6_native@0.05,Caries 2 class,73,0.08030250767302735,0.0845
+v6_native@0.05,Caries 3 class,33,0.012556953489309094,0.0116
+v6_native@0.05,Caries 4 class,4,0.0,0.0
+v6_native@0.05,Caries 5 class,81,0.09076446504168627,0.1097
+v6_native@0.05,Caries 6 class,5,0.0,0.0051
+v6box_medsam@0.05,Abrasion,408,0.6652712881681534,0.6471
+v6box_medsam@0.05,Filling,186,0.2629450493927269,0.2799
+v6box_medsam@0.05,Crown,19,0.5685190820412287,0.6313
+v6box_medsam@0.05,Caries 1 class,62,0.01674853759064961,0.1195
+v6box_medsam@0.05,Caries 2 class,73,0.0166990279372403,0.0845
+v6box_medsam@0.05,Caries 3 class,33,0.0032965882416206758,0.0116
+v6box_medsam@0.05,Caries 4 class,4,0.0,0.0
+v6box_medsam@0.05,Caries 5 class,81,0.10607881405601434,0.1097
+v6box_medsam@0.05,Caries 6 class,5,0.0,0.0051
+v6_native@0.25,Abrasion,408,0.5843033344826882,0.6471
+v6_native@0.25,Filling,186,0.23938786810955795,0.2799
+v6_native@0.25,Crown,19,0.4909458528270404,0.6313
+v6_native@0.25,Caries 1 class,62,0.10090756845861446,0.1195
+v6_native@0.25,Caries 2 class,73,0.06631895048070384,0.0845
+v6_native@0.25,Caries 3 class,33,0.011456859971711458,0.0116
+v6_native@0.25,Caries 4 class,4,0.0,0.0
+v6_native@0.25,Caries 5 class,81,0.06954345604657988,0.1097
+v6_native@0.25,Caries 6 class,5,0.0,0.0051
+v6box_medsam@0.25,Abrasion,408,0.6266986967469987,0.6471
+v6box_medsam@0.25,Filling,186,0.23828029392872924,0.2799
+v6box_medsam@0.25,Crown,19,0.4857729179511353,0.6313
+v6box_medsam@0.25,Caries 1 class,62,0.012658381222737655,0.1195
+v6box_medsam@0.25,Caries 2 class,73,0.014782150483955958,0.0845
+v6box_medsam@0.25,Caries 3 class,33,0.00132013201320132,0.0116
+v6box_medsam@0.25,Caries 4 class,4,0.0,0.0
+v6box_medsam@0.25,Caries 5 class,81,0.08311862961648005,0.1097
+v6box_medsam@0.25,Caries 6 class,5,0.0,0.0051
+TPonly_v6_native@0.05,Abrasion,408,0.715407528963479,0.6471
+TPonly_v6_native@0.05,Filling,186,0.2907768910402268,0.2799
+TPonly_v6_native@0.05,Crown,19,0.6999060830452792,0.6313
+TPonly_v6_native@0.05,Caries 1 class,62,0.1393393177123194,0.1195
+TPonly_v6_native@0.05,Caries 2 class,73,0.1308728592018425,0.0845
+TPonly_v6_native@0.05,Caries 3 class,33,0.026567656765676573,0.0116
+TPonly_v6_native@0.05,Caries 4 class,4,0.0,0.0
+TPonly_v6_native@0.05,Caries 5 class,81,0.1259763931511701,0.1097
+TPonly_v6_native@0.05,Caries 6 class,5,0.0,0.0051
+TPonly_v6box_medsam@0.05,Abrasion,408,0.7712660747410817,0.6471
+TPonly_v6box_medsam@0.05,Filling,186,0.2973960940726295,0.2799
+TPonly_v6box_medsam@0.05,Crown,19,0.653444672198312,0.6313
+TPonly_v6box_medsam@0.05,Caries 1 class,62,0.027095525291761437,0.1195
+TPonly_v6box_medsam@0.05,Caries 2 class,73,0.021892895726396404,0.0845
+TPonly_v6box_medsam@0.05,Caries 3 class,33,0.012871287128712869,0.0116
+TPonly_v6box_medsam@0.05,Caries 4 class,4,0.0,0.0
+TPonly_v6box_medsam@0.05,Caries 5 class,81,0.14241430183007575,0.1097
+TPonly_v6box_medsam@0.05,Caries 6 class,5,0.0,0.0051
+oracle_medsam,Abrasion,408,0.8643083767532254,0.6471
+oracle_medsam,Filling,186,0.4981412816506904,0.2799
+oracle_medsam,Crown,19,0.7160500260552372,0.6313
+oracle_medsam,Caries 1 class,62,0.08856445698645593,0.1195
+oracle_medsam,Caries 2 class,73,0.13011287926926068,0.0845
+oracle_medsam,Caries 3 class,33,0.18508727496323352,0.0116
+oracle_medsam,Caries 4 class,4,0.32871287128712867,0.0
+oracle_medsam,Caries 5 class,81,0.2517952988282669,0.1097
+oracle_medsam,Caries 6 class,5,0.1480693069306931,0.0051

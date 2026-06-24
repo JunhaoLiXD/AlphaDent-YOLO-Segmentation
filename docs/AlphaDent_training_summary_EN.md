@@ -462,7 +462,8 @@ objects; mixup blurs fine mask boundaries) were hurting the very small lesions w
 while **copy-paste** is a "medical-grade" augmentation that pastes real lesions with their
 masks into new images, boosting rare-Caries exposure without distorting them. The plan was
 to decouple the two: turn off the destructive augmentations and turn on copy-paste.
-Implemented via `experiments/train_small_object_friendly.py`.
+Implemented via a standalone Plan-D training template (`experiments/train_small_object_friendly.py`,
+removed in the 2026-06-24 cleanup once V11 was closed).
 
 ### Best validation result
 
@@ -626,7 +627,8 @@ single variable vs the V6 baseline.
 
 ### Implementation (this is what changed in the code)
 
-- **`tools/tile_yolo_seg.py`** — new canonical tiling library, the single source of truth:
+- **The tiling library** (`tools/tile_yolo_seg.py`, removed in the 2026-06-24 cleanup after V13 was
+  closed; `src/01`/`src/02` still carry inline copies of the geometry) was the single source of truth:
   - *forward* `build_tiled_dataset`: slice each image, clip every polygon to the tile with
     Sutherland-Hodgman and renormalize to the tile frame, subsample object-free train tiles
     (val keeps all), write a new YOLO-seg dataset + `yolo_seg_tiles.yaml`;
@@ -851,6 +853,25 @@ Conclusion:
 
 ## 4. Recommended Next Direction
 
+### Active experiment — V15: NWD box loss (built 2026-06-23, not yet trained)
+
+Both closed refinement lines (two-stage in `src/04`–`src/06`, MedSAM in `src/07`) hit the **same
+wall: V6's tiny boxes are loose.** Each validated a large GT-box **oracle** ceiling for the small
+Caries (+0.11–0.22) but never reached it, because at conf≈0.05 (needed for small-Caries recall) the
+boxes are loosely localized (recall@IoU0.5 ≪ recall@IoU0.3). So the next lever is to **fix the box at
+training time**, not refine after it. Root cause: **IoU/CIoU is unstable for tiny boxes** (a few-pixel
+shift swings IoU wildly → erratic gradient → boxes never tighten) and IoU-threshold assignment starves
+tiny GTs of positive samples. **NWD (Normalized Gaussian Wasserstein Distance)** models each box as a
+2-D Gaussian and is smooth under small shifts. V15 blends it into the box regression loss:
+`box_loss = λ·(1−CIoU) + (1−λ)·(1−NWD)` — large boxes keep CIoU, small boxes get the stable NWD signal.
+**Single variable vs V6** (only the loss changes). Built in `src/08-yolo-seg-nwd-training.ipynb`
+(a new training notebook; `src/01` untouched). Full design, knobs, and the pre-registered eval
+(leading indicator = small-Caries localization recall@IoU0.5 via `src/05`) are in
+`docs/small_object_box_quality_notes.md`. Versioning: V14 = the MedSAM eval table, so this training
+run is **V15** → `results/version15_results.csv`.
+
+---
+
 All direct improvements to the full-image YOLO approach have now been tested:
 
 - Image size: `640` → `768` helped; `768` → `896` did not.
@@ -939,15 +960,31 @@ Possible future directions:
      (recall-vs-localization tension at conf≈0.05), not Stage-2 capability. **Line closed; V6 stays
      production.** Next: all-class/capacity levers — TTA, V6+V10 ensemble, larger backbone.
 
-3. **Class-specific analysis**
+3. **MedSAM mask refinement** — Phase 0 RUN (2026-06-23), NO-GO for a zero-shot swap
+   (see [`docs/medsam_refine_research_notes.md`](medsam_refine_research_notes.md);
+   results in `results/version14_results.csv`, eval-only `src/07-medsam-mask-refine.ipynb`).
+   - A *different* lever from the two-stage line: keep V6's box + class + confidence, only **swap the
+     coarse YOLO mask for a MedSAM (box-prompted) mask**, targeting **large-class mask IoU** (high
+     mAP weight, and V6's large-class boxes are trustworthy), not small-object localization.
+   - **Result (same matcher for every variant):** `v6box_medsam@0.05` = **0.182 aggregate / 0.499
+     large** vs `v6_native@0.05` = **0.197 / 0.494** — the large-class gain (+0.005) is inside the
+     noise band and the aggregate regressed (−0.015) → **go/no-go fails**. The win is real but
+     **concentrated in Abrasion alone** (0.618 → 0.665, +0.047); Crown regressed (−0.035) and the
+     small Caries **collapsed** (Caries 1/2: ~0.1 → 0.017 — SAM segments the whole tooth on a loose
+     box). The GT-box `oracle_medsam` = **0.357 / 0.693** (highest oracle in the project) and even
+     rescues the small Caries, so the failure is **box quality, not MedSAM mask quality** — the same
+     wall the two-stage line hit. **V6 stays production.** Open options: an optional decoder-only /
+     LoRA fine-tune (helps the domain gap, not the box gap) or pivot to the all-class levers below.
+
+4. **Class-specific analysis**
    - Track per-class mAP after every important run.
    - Focus especially on Caries 3, 4, 5, and 6.
 
-4. **Threshold tuning**
+5. **Threshold tuning**
    - Use validation data to tune confidence thresholds.
    - Avoid simply lowering confidence globally because it increases false positives.
 
-5. **K-fold validation**
+6. **K-fold validation**
    - The validation set is small and rare classes are unstable.
    - K-fold can provide a more reliable estimate.
 
@@ -955,11 +992,14 @@ Possible future directions:
 
 ## 6. Current Best Baseline
 
-V10 is technically the highest-scoring run, though the improvement over V6 is negligible (+0.0005).  
-V11 (Plan D) did not beat it — it regressed to 0.2135.  
-V12 (P2 head) did not beat it either — best 0.2215 (a single-epoch spike; ~0.21 sustained).  
-V13 (crop/tile training) regressed severely — comparable Mask mAP50-95 = 0.0993 vs V6's re-scored 0.2099 (−0.11).  
-Until a new experiment clearly improves the result, the current best baseline should be considered:
+**Best submission: the V6+V10 ensemble + hflip TTA (public LB 0.31189) — see §7.** The summary below
+covers the best *single model*, which is what the ensemble is built from.
+
+V10 is technically the highest-scoring single run, though the improvement over V6 is negligible
+(+0.0005). V11 (Plan D) regressed to 0.2135; V12 (P2 head) best 0.2215 (a single-epoch spike, ~0.21
+sustained); V13 (crop/tile training) regressed severely (comparable 0.0993 vs V6's re-scored 0.2099,
+−0.11); V15 (NWD-default) sat at the plateau and its box-quality leading indicator regressed (§ V15).
+The best single-model baseline:
 
 ```text
 Model:          yolov8s-seg.pt
@@ -970,5 +1010,46 @@ Best Mask mAP50-95: approximately 0.2341  (V10)
 Previous best:  approximately 0.2336       (V6, essentially the same)
 ```
 
-For practical purposes, either V6 or V10 can be used as the baseline.  
-V6 has higher precision; V10 has higher recall.
+For practical purposes either V6 or V10 works as a single-model baseline (V6 higher precision, V10
+higher recall) — but for **submission** use the ensemble in §7.
+
+---
+
+## 7. V6+V10 ensemble + hflip TTA — first leaderboard gain (LB 0.31189)
+
+After the small-object lines (two-stage, MedSAM, NWD) all hit the same box-quality wall, the lever
+that finally moved the leaderboard was the **all-class, zero-training** one.
+
+**Pipeline.** Full-image inference; V6 and V10 each predict on the image **and its horizontal flip**
+(detections mirrored back); all detections pooled and merged by **class-wise NMS** (IoU=0.6). The
+confidence floor is **tuned on val** (`src/10` sweeps it against the comparable Mask mAP and keeps
+the highest floor within the 0.003 noise band of the best — for an mAP-scored LB a hard threshold can
+only truncate the PR curve, so the floor should be low-but-not-noisy). Note Ultralytics `augment=True`
+is a **no-op for segmentation models** (it warns and reverts to single-scale), so TTA is done manually
+as an hflip pass.
+
+**Validation check (`src/09`, same comparable Mask mAP as src/03/04/05).**
+
+| Variant | Comparable Mask mAP50-95 | vs V6 anchor |
+|---|---:|---:|
+| V6 (anchor) | 0.2053 | — |
+| V10 | 0.2029 | −0.0024 |
+| Ensemble (no TTA) | 0.2084 | +0.0031 |
+| V6 + TTA | 0.2079 | +0.0026 |
+| V10 + TTA | 0.2078 | +0.0026 |
+| **Ensemble + TTA** | **0.2134** | **+0.0082** |
+
+TTA-alone and ensemble-alone each sit at the noise edge; **only the combination clears it**, so the
+full 4-pass `Ensemble+TTA` is required. Large classes all rose (Abrasion 0.637→0.656, Filling
+0.269→0.284, Crown 0.636→0.648); no class regressed meaningfully.
+
+**Leaderboard.** `0.31189` vs single V6 `0.27047` → **+0.0414**, the first submission to beat
+single-model V6. The LB gain is ~5× the comparable-val-metric delta (+0.008) — **the local metric
+under-predicted the real gain.** Treat the val metric as a conservative directional signal, not an
+absolute.
+
+**Status.** This is the **production submission**, with **zero additional training**. `src/09` is the
+val gain check; `src/10` is the submission builder (auto-detects V6/V10 + the competition test set,
+tunes the conf floor on val, writes `submission.csv` in the `id,patient_id,class_id,confidence,poly`
+format). Cheap follow-ups that did not get spent yet: lower `ENS_NMS_IOU`, extra TTA views
+(vflip/multi-scale), confidence-weighting the two models, or a larger backbone (yolov8m/l-seg @768).

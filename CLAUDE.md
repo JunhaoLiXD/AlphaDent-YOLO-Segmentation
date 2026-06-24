@@ -8,7 +8,9 @@ YOLOv8 **instance segmentation** for the Kaggle competition *AlphaDent: Teeth Ma
 detect and segment dental findings (Caries 1–6, Crown, Abrasion, etc.) on panoramic X-rays.
 The development metric that matters is **Mask mAP50-95** (`metrics/mAP50-95(M)` in the CSVs).
 
-Current best: **~0.234** Mask mAP50-95 (V6 imgsz=768, and V10 ≈ tied) — use V6/V10 for submissions.
+Current best **submission**: **V6+V10 ensemble + hflip TTA → public LB 0.31189** (vs single V6 0.27047,
+**+0.0414**; zero training; `src/09` val check, `src/10` submission). Best **single model**: **~0.234**
+Mask mAP50-95 (V6 imgsz=768, V10 ≈ tied) — the ensemble is built from these two.
 The full-image approach is plateaued at ~0.23–0.24. V11 (Plan D, −0.020), V12 (P2 head, no gain),
 and V13 (crop/tile training, **−0.11** — the worst result) all failed to beat the baseline. Key
 reframing from V13: **mAP weight ≠ object count.** The "~78% of objects occupy <1% of the image"
@@ -20,13 +22,16 @@ effort (tiling, P2) that sacrifices the large classes backfires.
 ## Repository structure
 
 ```
-configs/      Experimental model architectures (e.g. P2 head) — NOT yet trained
 docs/         Experiment log + workflow + research notes (the project's written memory)
-experiments/  Standalone training templates for a specific run (e.g. V11 copy-paste)
 results/      versionN_results.csv — per-epoch Ultralytics metrics for each run
-src/          Training notebook (01) + Kaggle submission notebook (02)
+src/          Training notebooks + Kaggle submission/eval notebooks (01–10)
 tools/        Validation / diagnostic scripts compared against the native baseline
 ```
+
+> Cleanup 2026-06-24: the failed-line scaffolding was removed — `configs/` (V12 P2-head YAML),
+> `experiments/` (V11 Plan-D template), `stage2/` (two-stage run outputs), and the tiling/SAHI
+> tools. The experiments themselves are still documented below and in the experiment log; only the
+> now-dead files are gone.
 
 Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 
@@ -35,21 +40,29 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/01-yolo-seg-baseline-training-alphadent.ipynb` — trains YOLOv8-seg; produces `weights/best.pt`, `weights/last.pt`, `results.csv`.
 - `src/02-alphadent-yolo-seg-submission.ipynb` — inference only; loads a checkpoint, runs on test images, writes `submission.csv` (format `id,patient_id,class_id,confidence,poly`).
 - `src/03-alphadent-val-map-eval.ipynb` — evaluation only; comparable full-image (tiled+merged) Mask mAP, V13 vs V6 re-scored with the same self-contained mask-mAP code.
-- `src/04-stage2-oracle-roi.ipynb` — Phase 0 oracle for the two-stage detect-then-refine plan (`docs/small_object_research_notes.md`): GT boxes as a perfect Stage 1 → high-res ROI → U-Net+pretrained-ResNet18 Stage 2 (class + fine mask) → comparable full-image Mask mAP vs documented V6. **Run; direction validated** (outputs in `stage2/`).
-- `src/05-stage1-recall-and-transfer.ipynb` — Phase 1a/1b: runs V6 as a real Stage 1 and measures per-class **localization recall** (the gate, PASSED), then the transfer check (feed V6 boxes into `stage2_best.pt`, full + TP-only pipeline Mask mAP — WEAK). Needs the V6 detector + `stage2_best.pt` as Kaggle inputs. Results in `stage2/phase1a_recall.csv` / `phase1b_pipeline.csv`.
-- `src/06-stage2-phase1c-real-boxes.ipynb` — Phase 1c (BUILT, not yet trained): retrain Stage 2 on **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→fg, <0.3→bg, [0.3,0.5)→ignore; bg subsampled ~3:1) with a **background class** (`nc+1`), warm-started from `stage2_best.pt`; evals full V6→Stage2 pipeline (`full@0.05` headline) + hybrid (large→V6) vs V6 0.2099. Same V6+`stage2_best.pt` Kaggle inputs as `src/05`.
+- `src/04-stage2-oracle-roi.ipynb` — Phase 0 oracle for the two-stage detect-then-refine plan (`docs/small_object_research_notes.md`): GT boxes as a perfect Stage 1 → high-res ROI → U-Net+pretrained-ResNet18 Stage 2 (class + fine mask) → comparable full-image Mask mAP vs documented V6. **Run; direction validated** (run outputs were under `stage2/`, since removed; results in the experiment log).
+- `src/05-stage1-recall-and-transfer.ipynb` — Phase 1a/1b: runs V6 as a real Stage 1 and measures per-class **localization recall** (the gate, PASSED), then the transfer check (feed V6 boxes into `stage2_best.pt`, full + TP-only pipeline Mask mAP — WEAK). Needs the V6 detector + `stage2_best.pt` as Kaggle inputs. (Run outputs were under `stage2/`, removed in the 2026-06-24 cleanup; results retained in the experiment log.)
+- `src/06-stage2-phase1c-real-boxes.ipynb` — Phase 1c (TRAINED, FAILED/NO-GO): retrain Stage 2 on **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→fg, <0.3→bg, [0.3,0.5)→ignore; bg subsampled ~3:1) with a **background class** (`nc+1`), warm-started from `stage2_best.pt`; evals full V6→Stage2 pipeline (`full@0.05` headline) + hybrid (large→V6) vs V6 0.2099. Same V6+`stage2_best.pt` Kaggle inputs as `src/05`. Two-stage line closed.
+- `src/07-medsam-mask-refine.ipynb` — MedSAM Phase 0 (RUN, NO-GO): keep V6 box/class/score, swap the coarse YOLO mask for a box-prompted MedSAM mask; eval-only, zero-training. Result in `results/version14_results.csv` (renamed from `medsam_phase0_results.csv`). Blanket swap regressed aggregate; win was Abrasion-only; failure = box quality not mask quality (`docs/medsam_refine_research_notes.md`).
+- `src/08-yolo-seg-nwd-training.ipynb` — **V15 (TRAINED, default λ=0.5/C=5.0 UNDERWHELMED)**: `yolov8s-seg` + **NWD-blended box regression loss** (`box_loss = λ·(1−CIoU) + (1−λ)·(1−NWD)`) to tighten loose tiny boxes — the wall both closed lines hit. New **training** notebook (does NOT rewire `src/01`); single variable vs V6 (full-image, imgsz=768, clean aug). Monkey-patches `BboxLoss.forward` (uses `*extra` to survive the ≥8.3 `imgsz,stride` signature). Knobs `NWD_IOU_RATIO`/`NWD_CONSTANT` in §6. Saves `results/version15_results.csv`. Design: `docs/small_object_box_quality_notes.md`. **Result: best ≈0.24 (spiky, sustained ~0.228 = at the plateau); the `src/05` leading indicator (recall@IoU0.5) REGRESSED on all supported Caries (mean −0.035) + large classes → NWD-default failed; line on hold (C-sweep / size-gate untried).**
+- `src/09-ensemble-tta-eval.ipynb` — **V6+V10 ensemble + manual hflip TTA, val gain check (eval-only).** Full-image; each model on image+hflip (mirrored back), pooled + class-wise NMS (IoU 0.6); scored with the src/03/04/05 comparable Mask mAP. 6 variants for attribution; headline `Ensemble+TTA` 0.2134 vs V6 0.2053 (+0.0082, large classes up, no regression). Ultralytics `augment=True` is a **no-op for seg** → TTA is manual hflip. Auto-detects `version6`/`version10` weights.
+- `src/10-ensemble-tta-submission.ipynb` — **THE PRODUCTION SUBMISSION.** Same ensemble+TTA pipeline on the test set → `submission.csv` (`id,patient_id,class_id,confidence,poly`). **Confidence floor tuned on val** (sweep the comparable Mask mAP, keep the highest floor within 0.003 of best). **Public LB 0.31189** vs single V6 0.27047 (**+0.0414**). Inputs: competition dataset + V6/V10 + the training `yolo_seg_train.yaml` (for the floor sweep). `ALLOW_INTERNET_INSTALL=True` (this comp allows net).
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
-- `tools/make_clahe_yolo_dataset.py` (1B), `tools/infer_sahi_yolo_seg.py` (1C, visual only — no mAP), `tools/sweep_yolo_conf.py` (1D, submission threshold).
-- `tools/tile_yolo_seg.py` — V13 canonical tiling library (forward: build tiled dataset; reverse: `untile_polygon` + `merge_detections`). Mirrored inline into `src/01` (build+train) and `src/02` (tiled inference+submit) so the notebooks stay Kaggle-self-contained; keep the inline copies in sync with this file.
-- `experiments/train_small_object_friendly.py` — V11 "Plan D" template (mosaic=0, mixup=0, copy_paste=0.2). Defaults to a dry-run printout; do not auto-train.
-- `configs/yolov8s-seg-p2.yaml` — experimental stride-4 head; review before training.
+- `tools/make_clahe_yolo_dataset.py` (1B, CLAHE dataset build), `tools/sweep_yolo_conf.py` (1D, submission threshold).
+- **Removed in the 2026-06-24 cleanup (dead-line files; experiments still documented in the log):**
+  `tools/tile_yolo_seg.py` (V13 tiling lib — V13 failed; `src/01`/`src/02` keep inline copies of the
+  geometry), `tools/infer_sahi_yolo_seg.py` (SAHI visual-only probe), `experiments/train_small_object_friendly.py`
+  (V11 Plan D template), `configs/yolov8s-seg-p2.yaml` (V12 P2 head). The whole `stage2/` folder
+  (two-stage run outputs + `stage2_best.pt`) and `models/stage2_p1c_best.pt` were also removed.
 
 ## Training / inference workflow
 
 1. Train (`src/01`) at `imgsz=768`, change **one** major factor vs the previous best.
 2. Save the run's `results.csv` as `results/versionN_results.csv`.
 3. Diagnose with `tools/val_native_yolo_seg.py` (always evaluate `best.pt`, never `last.pt`).
-4. Build the submission with `src/02`; tune the confidence threshold with `sweep_yolo_conf.py`.
+4. Build the submission. **Production submission = `src/10` (V6+V10 ensemble + hflip TTA, LB 0.31189)**,
+   which tunes the confidence floor on val itself. `src/02` is the older single-model/tiled submission
+   path; `tools/sweep_yolo_conf.py` is the standalone conf sweep.
 
 ## Experiment / versioning conventions
 
@@ -78,7 +91,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - Keep `README.md`'s history table and "current best" in sync with the experiment log.
 - Use `docs/future_loss_modification_notes.md` for unimplemented loss ideas (focal / class-weighted BCE / Tversky); mark them clearly as research notes until coded.
 - Use `docs/small_object_research_notes.md` for the two-stage detect-then-refine plan (YOLO Stage 1 → high-res ROI → trained Stage 2) — now **CLOSED/NO-GO** after Phase 1c (kept as a record).
-- Use `docs/medsam_refine_research_notes.md` for the MedSAM mask-refinement plan (keep V6 boxes/class/score, swap the coarse YOLO mask for a MedSAM mask to lift large-class IoU); research notes until coded, Phase 0 is zero-training.
+- Use `docs/medsam_refine_research_notes.md` for the MedSAM mask-refinement plan (keep V6 boxes/class/score, swap the coarse YOLO mask for a MedSAM mask to lift large-class IoU) — Phase 0 **RUN, NO-GO** (failure = box quality, not mask quality).
+- Use `docs/small_object_box_quality_notes.md` for the **box-quality / NWD** plan (V15): fix loose tiny boxes at the loss with an NWD-blended box regression loss — the lever both closed lines pointed to. Implemented in `src/08`, built/not-yet-trained.
 
 ## Reminders
 
@@ -375,3 +389,113 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - **Status**: implemented, **not yet run**. README structure + the research note's status banner /
   "Phase 0 notebook" section + project memory updated. Awaiting the Kaggle run →
   `medsam_phase0_results.csv` / `medsam_phase0_summary.json`.
+
+### 2026-06-23 — MedSAM Phase 0 RUN & analysed → NO-GO (zero-shot swap); docs updated
+- **Run**: user ran `src/07` and uploaded the outputs. Renamed `medsam_phase0_results.csv` →
+  **`results/version14_results.csv`** (per the user; note this is an *eval-only* per-class-AP table,
+  not a per-epoch training curve like the other `versionN_results.csv`), and **deleted**
+  `medsam_phase0_summary.json` after lifting the headline numbers into the docs. Config: `vit_b`,
+  `USE_ROI_CROP=True`, `PAD_FACTOR=1.5`, capture conf 0.05.
+- **Result (same in-notebook matcher for every variant; V6 native baseline):**
+  - Aggregate (9 cls): `v6_native@0.05` = **0.1970**, `v6box_medsam@0.05` = **0.1822** (−0.0148),
+    `TPonly_v6box_medsam@0.05` = 0.2140, **`oracle_medsam` = 0.3568** (highest oracle in the project).
+  - Large (Abrasion/Crown/Filling): native **0.4938** → medsam **0.4989** (+0.0051), oracle **0.6928**.
+  - Per-class real pipeline: **Abrasion 0.618→0.665 (+0.047)**, Filling 0.260→0.263 (flat),
+    **Crown 0.604→0.569 (−0.035)**, **Caries1 0.108→0.017, Caries2 0.080→0.017 (collapse)**,
+    Caries5 0.091→0.106 (+0.015). Oracle rescues Caries (C1/2/3/5 = 0.089/0.130/0.185/0.252).
+- **Go/no-go → NO-GO for a blanket swap.** Both clauses fail: large-class gain (+0.0051) is inside the
+  ~0.003 noise band AND the aggregate regressed (−0.0148). The win is **real but concentrated in
+  Abrasion alone**; a selective Abrasion-only hybrid only reaches ≈0.202 aggregate (still noise, since
+  one class = 1/9 weight in a per-class-averaged metric) → not submission-worthy.
+- **Diagnosis (confirms the user's framing again): box quality, not MedSAM mask quality.** The GT-box
+  oracle hits 0.357/0.693 and even masks tiny Caries well, but real V6 Caries boxes at conf≈0.05 are
+  too loose → SAM segments the **whole tooth** → IoU craters. Same wall as the two-stage line; large
+  lesions (Abrasion) have accurate-enough boxes so they keep most of the oracle gain.
+- **Decision (pending, raised with user)**: optional decoder-only/LoRA fine-tune (helps a *domain*
+  gap, NOT the *box-framing* gap that sinks the small classes — so expect large-class-only help) vs
+  close the line and pivot to all-class/capacity levers (TTA, V6+V10 ensemble, larger backbone).
+  **V6 (≈0.234) stays production either way.**
+- **Docs updated**: `results/version14_results.csv` (rename) + summary JSON deleted; README (results
+  tree + a MedSAM Phase-0 subsection), `docs/medsam_refine_research_notes.md` (status banner → NO-GO +
+  full "Phase 0 RESULT" section), EN/CN experiment logs (§5 item 3 added, items renumbered), and the
+  project memory.
+
+### 2026-06-23 — Direction picked (box quality / NWD) + `src/08` (V15) built
+- **Direction (with user)**: both closed lines (two-stage, MedSAM) hit the **same wall — V6's tiny
+  boxes are loose**; their GT-box oracles proved a +0.11–0.22 small-Caries ceiling that the real
+  pipeline never reached. So instead of refining after a loose box, **fix the box at training time.**
+  After a literature scan (NWD, RFLA, DETR-family — surfaced to the user), the user chose the **NWD**
+  lever (Category A: smallest change, highest fit, doesn't touch large classes).
+- **Root cause** (documented): IoU/CIoU is unstable for tiny boxes (a few-pixel shift swings IoU →
+  erratic gradient → boxes never tighten) and IoU-threshold assignment starves tiny GTs of positives.
+  **NWD** models a box as a 2-D Gaussian (smooth under small shifts).
+- **New research note `docs/small_object_box_quality_notes.md`**: motivation (the box-quality wall),
+  root cause, the V15 change (`box_loss = λ·(1−CIoU) + (1−λ)·(1−NWD)`, regression-loss-only), the
+  `src/08` implementation, knobs, the gotcha, the pre-registered eval (leading indicator =
+  small-Caries recall@IoU0.5 via `src/05`), recommended sweep order, References.
+- **`src/08-yolo-seg-nwd-training.ipynb` BUILT (26 cells, 14 code, all compile; built via a one-off
+  `tools/_build_src08.py`, deleted).** A **new training notebook** (user preference: do NOT rewire
+  `src/01` even for a training run — see the new memory). Reuses `src/01`'s full-image scaffolding;
+  writes a runtime YAML with absolute paths (NOT tiled). The change is a class-level monkey-patch of
+  `ultralytics.utils.loss.BboxLoss.forward`: recompute only the regression term (CIoU↔NWD blend) and
+  **delegate the DFL term to the stock forward**. Single variable vs V6.
+- **Gotcha fixed (user hit it on first run)**: Ultralytics ≥8.3 `BboxLoss.forward` gained
+  `imgsz, stride` (now `self`+9=10 positional args) → `TypeError: takes 8 positional arguments but 10
+  were given`. Verified the current signature against the upstream source, then made the patch absorb
+  trailing args with **`*extra`** and pass them through to `_ORIG_BBOX_FORWARD` → version-robust.
+- **Versioning**: V14 = the MedSAM eval table (`version14_results.csv`), so this *training* run is
+  **V15** → `results/version15_results.csv`.
+- **Knobs**: `NWD_ENABLE` (False = parity baseline), `NWD_IOU_RATIO` λ (default 0.5), `NWD_CONSTANT`
+  C (default 5.0, **the key knob**, stride-normalized units, sweep {3,5,8}).
+- **Status**: implemented, **not yet trained**. README (structure + V15 subsection), EN/CN logs (§4
+  active-experiment block), this status log, and project memory updated. Awaiting the Kaggle run →
+  `results/version15_results.csv`; first judge via the `src/05` recall@IoU0.5 leading indicator.
+
+### 2026-06-24 — V15 (NWD-default) UNDERWHELMED; V6+V10 ensemble+TTA = FIRST LEADERBOARD GAIN (LB 0.31189)
+- **V15 trained (`results/version15_results.csv`, 83 ep, default λ=0.5/C=5.0).** Best Mask mAP50-95
+  ≈0.24 but a spike (ep53=0.2415); sustained ~0.228 → essentially **at the V6 plateau, no clear win.**
+  Reran `src/05` with V15 vs V6 (the pre-registered leading indicator): small-Caries **recall@IoU0.5
+  REGRESSED** — Caries 1/2/3/5 = −0.016/−0.082/−0.030/−0.012 (mean **−0.035**), and the large classes
+  fell too (Abrasion −0.039, Crown −0.053). Diagnosis: blending NWD globally at λ=0.5 **diluted the
+  CIoU gradient** the large/medium boxes relied on (NWD saturates for big boxes at C=5.0), with no
+  compensating small-box tightening. **"This knob failed," not "NWD dead"** — C-sweep {3,5,8} and a
+  **size-gated NWD** (small boxes only, large keep pure CIoU) remain untried — but the line is **on
+  hold**; the ensemble below is the productive direction.
+- **`src/05` generalized** to run multiple detectors side-by-side (auto-detect V6 + V15/`nwd`) and
+  print a V6-vs-V15 recall comparison with per-class deltas; Phase 1b (Stage-2 transfer) gated behind
+  `RUN_PHASE1B` (default off). Saved `phase1a_recall_compare.csv`.
+- **`src/09` BUILT & RUN — V6+V10 ensemble + manual hflip TTA, val gain check (eval-only).** Decisions
+  with user: eval-on-val-first, **class-wise NMS** merge, **manual hflip** TTA (Ultralytics
+  `augment=True` is a **no-op for seg** — warns + reverts; my probe couldn't catch the warning, so we
+  switched to a manual hflip pass: predict on the flip, mirror poly `x→1−x` / box x back, merge). 6
+  variants for attribution. **Result (comparable Mask mAP, V6 anchor 0.2053):** `Ensemble+TTA`
+  **0.2134 (+0.0082)**; TTA-alone (+0.0026) and ensemble-alone (+0.0031) each at the noise edge → only
+  the **combination** clears it; large classes all up (Abrasion/Filling/Crown), no regression.
+- **`src/10` BUILT & SUBMITTED — THE PRODUCTION SUBMISSION.** Same ensemble+TTA on the test set →
+  `submission.csv` (src/02 format, full-image — NOT tiled). **Confidence floor chosen on val** (my
+  recommended approach): sweep the comparable Mask mAP over a floor grid, keep the **highest floor
+  within the 0.003 noise band of the best** (mAP-scored LB → a hard threshold only truncates the PR
+  curve, so the floor should be low-but-not-noisy). `ALLOW_INTERNET_INSTALL` set True (this comp allows
+  net; first run errored on the offline-only install guard). Inputs: competition dataset + V6/V10 + the
+  training `yolo_seg_train.yaml` (for the floor sweep; falls back to `DEFAULT_SUBMIT_CONF=0.05` if absent).
+- **LEADERBOARD: 0.31189 vs single V6 0.27047 → +0.0414** — **first submission to beat single-model V6.**
+  The **LB gain (+0.041) is ~5× the comparable-val-metric delta (+0.008)** → the local metric badly
+  under-predicted it; treat the val metric as a conservative directional signal, not an absolute. Zero
+  additional training.
+- **Docs updated**: README (Current Best → LB table + ensemble section + V15 result + src/09/10 in
+  structure), EN/CN logs (§6 rewrite + new §7 ensemble section), CLAUDE.md (overview current-best +
+  notebooks list + this entry), project memory. **Cheap untried follow-ups:** lower `ENS_NMS_IOU`,
+  extra TTA views (vflip/multi-scale), confidence-weight the two models, larger backbone (yolov8m/l-seg @768).
+
+### 2026-06-24 — Repo cleanup: removed dead-line files (experiments kept in the docs)
+- **Deleted (user-confirmed groups A/B/C):** `stage2/` (whole folder — `stage2_best.pt` + the 6 Phase
+  0/1a/1b/1c result CSVs) and `models/stage2_p1c_best.pt` (two-stage line, CLOSED); `tools/tile_yolo_seg.py`
+  (V13 tiling lib) and `tools/infer_sahi_yolo_seg.py` (SAHI probe); `experiments/train_small_object_friendly.py`
+  (V11 Plan D) and `configs/yolov8s-seg-p2.yaml` (V12 P2 head); `tools/__pycache__/`. Empty `stage2/`,
+  `configs/`, `experiments/` dirs pruned. 10 git-tracked deletions + the untracked `.pt`/pycache.
+- **Kept:** `models/version6/10/15_best.pt`; `tools/{val_native_yolo_seg,sweep_yolo_conf,make_clahe_yolo_dataset}.py`;
+  all `docs/`; all `src/` notebooks (incl. the closed-line 04/05/06/07 as the experiment record).
+- **Docs synced (this task):** removed the now-dangling file references from the *current-state* sections
+  of README + CLAUDE.md (structure trees, tool lists) and the EN/CN logs / research notes; **kept every
+  experiment's narrative + conclusions** (the point was to drop dead *files*, not the *record*). The dated
+  status-log entries above are left intact as historical record (they describe what was true on each date).

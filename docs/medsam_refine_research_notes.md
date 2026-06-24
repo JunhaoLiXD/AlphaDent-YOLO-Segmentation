@@ -1,8 +1,23 @@
 # MedSAM Mask-Refinement Research Notes — keep V6 localization, replace the mask
 
-> **Status (2026-06-18): Phase 0 BUILT in `src/07-medsam-mask-refine.ipynb`, not yet run.** Zero
-> training — needs only `version6_best.pt` + a MedSAM ViT-B checkpoint as Kaggle inputs. No
-> retraining of V6 or MedSAM in Phase 0.
+> **Status (2026-06-23): Phase 0 RUN — NO-GO for a zero-shot blanket mask swap.** Results in
+> `results/version14_results.csv` (renamed from `medsam_phase0_results.csv`; the summary JSON was
+> discarded). The real pipeline `v6box_medsam@0.05` = **0.182 aggregate / 0.499 large**, vs
+> `v6_native@0.05` = **0.197 / 0.494** — the large-class gain (+0.005) is inside the noise band AND
+> the aggregate regressed (−0.015), so the pre-registered go/no-go **fails**. The gain is real but
+> concentrated in **Abrasion alone** (+0.047); Crown regressed and the small Caries collapsed.
+> Diagnosis confirms the project-wide wall: **box quality**, not MedSAM mask quality — the GT-box
+> oracle reaches **0.357 aggregate / 0.693 large** (highest oracle in the project, and it even
+> rescues the small Caries), but real V6 Caries boxes are too loose for SAM. See the Phase 0 Result
+> section below. Decision pending: optional decoder-only fine-tune (helps the domain gap, not the
+> box gap) vs close the line and pivot to all-class levers (TTA / V6+V10 ensemble / larger backbone).
+> **Update:** the all-class pivot won — V6+V10 ensemble + hflip TTA reached **public LB 0.31189** (vs
+> single V6 0.27047). See README §"V6+V10 ensemble" and the EN/CN logs §7.
+>
+> **File note (2026-06-24 cleanup):** helper files cited below were removed when the related lines
+> closed — `tools/tile_yolo_seg.py` (the `untile_polygon` placement discipline) and the `stage2/`
+> folder. Such paths below are **historical**; `results/version14_results.csv` (this Phase 0's table)
+> is kept.
 
 ---
 
@@ -165,6 +180,72 @@ This is the *only* training step in the whole plan, and it is conditional on Pha
 - **Go/no-go:** `v6box_medsam@0.05` beats `v6_native@0.05` on the large classes beyond the ~0.003
   band (and no aggregate regression) → pursue a submission path; else consider the optional
   decoder-only fine-tune below, or stop.
+
+---
+
+## Phase 0 RESULT (run 2026-06-23) — NO-GO for a zero-shot blanket swap
+
+Run config: `vit_b`, `USE_ROI_CROP=True`, `PAD_MODE=relative`, `PAD_FACTOR=1.5`, capture conf 0.05.
+Outputs in `results/version14_results.csv` (per-class AP for every variant; the summary JSON was
+discarded after the headline numbers were lifted into this note). All variants scored with the SAME
+in-notebook matcher, so `v6box_medsam` − `v6_native` is a pure mask-only delta.
+
+**Aggregate and large-class (Abrasion/Crown/Filling) Mask mAP50-95:**
+
+| Variant | Aggregate (9 cls) | Large (Abr/Crown/Fill) |
+|---|---:|---:|
+| `v6_native@0.05` (baseline) | 0.1970 | 0.4938 |
+| `v6box_medsam@0.05` (real pipeline) | **0.1822** (−0.0148) | **0.4989** (+0.0051) |
+| `TPonly_v6_native@0.05` | 0.2365 | 0.5687 |
+| `TPonly_v6box_medsam@0.05` (perfect-FP ceiling) | 0.2140 | 0.5740 (+0.0053) |
+| `oracle_medsam` (GT boxes = ceiling) | **0.3568** | **0.6928** |
+
+**Per-class, real pipeline (`v6_native@0.05` → `v6box_medsam@0.05`):**
+
+| Class | n_gt | native | medsam | Δ |
+|---|---:|---:|---:|---:|
+| Abrasion | 408 | 0.618 | **0.665** | **+0.047** ✅ |
+| Filling | 186 | 0.260 | 0.263 | +0.003 (flat) |
+| Crown | 19 | 0.604 | **0.569** | −0.035 ❌ |
+| Caries 1 | 62 | 0.108 | **0.017** | −0.091 ❌ |
+| Caries 2 | 73 | 0.080 | **0.017** | −0.064 ❌ |
+| Caries 3 | 33 | 0.013 | 0.003 | −0.010 |
+| Caries 5 | 81 | 0.091 | 0.106 | +0.015 |
+
+(Caries 4 n=4 / Caries 6 n=5 are 0/noise in every real variant.)
+
+**Verdict — the pre-registered go/no-go fails on both clauses.** The large-class gain (+0.0051) is
+inside the ~0.003 noise band, AND the aggregate regressed (−0.0148). So a blanket "swap every YOLO
+mask for a MedSAM mask" is **NO-GO**.
+
+**What the result actually says (more useful than the binary):**
+
+1. **The win is real but concentrated in Abrasion alone.** Abrasion (the largest class, n=408)
+   gains +0.047 native / +0.057 TPonly — MedSAM genuinely produces sharper masks there. But Filling
+   is flat and Crown *regresses* (−0.035, n=19 noisy), so "MedSAM helps large classes" overstates
+   it: it helps *Abrasion*. A selective Abrasion-only hybrid (MedSAM for Abrasion, V6 for everything
+   else) lifts the aggregate to ≈0.202 — still inside the noise band, because a per-class-averaged
+   metric only gives one big class 1/9 weight. Not submission-worthy on its own.
+2. **MedSAM destroys the small Caries masks** (Caries 1/2 collapse from ~0.1 to ~0.017). On a loose
+   small box, SAM segments the most salient object — the **whole tooth**, not the lesion — so IoU
+   craters. This is the predicted "SAM segments the whole tooth" risk, realised.
+3. **The bottleneck is box quality, not MedSAM mask quality — same wall as the two-stage line.** The
+   GT-box oracle reaches **0.357 aggregate / 0.693 large** (the highest oracle in the project) and,
+   critically, *rescues the small Caries* (oracle Caries 1/2/3/5 = 0.089/0.130/0.185/0.252, vs
+   ~0.01–0.02 on real boxes). So with a perfect box MedSAM segments even tiny lesions well; the
+   collapse is 100 % attributable to V6's loose Caries boxes at conf≈0.05 (the recall-vs-localization
+   tension from Phase 1a). Large lesions (Abrasion) have accurate-enough boxes → the real pipeline
+   keeps most of the oracle gain there; small lesions do not.
+
+**Decision (pending):**
+- **Optional Phase 1 (decoder-only / LoRA fine-tune on dental):** could push Abrasion further and
+  may narrow a domain gap, but it does **not** fix the binding constraint for the small classes (that
+  is a *box-framing* gap, not a *mask-domain* gap — the oracle already shows MedSAM masks the lesion
+  correctly when the box is right). Expect it to help the large classes only.
+- **Close the line and pivot** to the all-class / capacity levers (consistent with the mAP-weight
+  reframing): inference-time TTA + a V6+V10 ensemble (zero training), then a larger backbone
+  (yolov8m/l-seg @ imgsz=768) as a single-variable run.
+- Either way, **V6 (≈0.234) remains the production/submission model.**
 
 ---
 

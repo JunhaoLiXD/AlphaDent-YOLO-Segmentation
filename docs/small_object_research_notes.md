@@ -6,6 +6,12 @@
 > from *perfect boxes* that a real Stage 1 cannot produce (see "Phase 1c result" below). **V6 (≈0.234)
 > remains the production/submission model.** Phases: Phase 0 = `src/04`, Phase 1a/1b = `src/05`,
 > Phase 1c = `src/06`. Pre-registered evaluation rules are below; they were honored at every step.
+>
+> **File note (2026-06-24 cleanup):** this line is closed, so its run outputs and helper tools were
+> deleted — the `stage2/` folder (`stage2_results.csv`, `stage2_history.csv`, `phase1a_recall.csv`,
+> `phase1b_pipeline.csv`, `phase1c_pipeline.csv`, `stage2_p1c_history.csv`) and `stage2_best.pt`, plus
+> `tools/tile_yolo_seg.py` (the `untile_polygon` helper cited below) and `tools/infer_sahi_yolo_seg.py`.
+> Any such file paths below are **historical** — the numbers and conclusions are kept here as the record.
 
 ---
 

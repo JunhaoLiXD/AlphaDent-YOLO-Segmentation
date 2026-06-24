@@ -7,15 +7,22 @@ The task is to detect and segment dental findings (Caries, Crown, Abrasion, etc.
 
 ## Current Best Result
 
-| Model | Image Size | Training Strategy | Best Mask mAP50-95 |
-|---|---:|---|---:|
-| YOLOv8s-seg | 768 | Mild rare Caries oversampling | **0.2341** (V10) |
-| YOLOv8s-seg | 768 | Baseline | 0.2336 (V6) |
+**Best submission (public leaderboard): `0.31189`** — a **V6+V10 ensemble + horizontal-flip TTA**
+(full-image inference, class-wise NMS), up from **`0.27047`** for the single V6 model (**+0.0414**).
+This is the **first result to beat single-model V6 on the leaderboard**, and it took **zero
+additional training** — `src/09` validated the gain on val, `src/10` produces the submission.
 
-The primary development metric is **Mask mAP50-95**, which reflects strict segmentation quality.
-Neither the P2 small-object head (V12) nor crop/tile-based training (V13) beat this baseline —
-V13 in fact regressed severely (−0.11), because tiling destroys the large objects that carry
-most of the score.
+| Approach | Public LB | Notes |
+|---|---:|---|
+| **V6+V10 ensemble + hflip TTA** | **0.31189** | production submission (`src/10`) |
+| V6 single model | 0.27047 | previous best submission |
+
+The primary *development* metric is **Mask mAP50-95** (val), where the single-model full-image
+approach plateaued at ~0.23–0.24 (V6 0.2336, V10 0.2341). Notably the **leaderboard ensemble gain
+(+0.041) is far larger than the comparable-val-metric gain (+0.008** measured in `src/09`) — the
+local metric was conservative. Neither the P2 head (V12), tile training (V13, −0.11), the two-stage
+refiner, MedSAM, nor NWD-default (V15) beat the single-model baseline; the **inference-time ensemble
+did**.
 
 ---
 
@@ -31,7 +38,8 @@ AlphaDent/
 │   ├── AlphaDent_training_summary_CN.md      # Detailed experiment log (Chinese)
 │   ├── future_loss_modification_notes.md     # Research notes: loss ideas (unimplemented)
 │   ├── small_object_research_notes.md        # Research notes: two-stage detect-then-refine (CLOSED)
-│   └── medsam_refine_research_notes.md       # Research notes: keep V6 boxes, swap mask via MedSAM
+│   ├── medsam_refine_research_notes.md       # Research notes: keep V6 boxes, swap mask via MedSAM (NO-GO)
+│   └── small_object_box_quality_notes.md     # Research notes: fix loose tiny boxes at the loss (NWD, V15)
 ├── results/
 │   ├── version5_results.csv    # Training metrics per epoch, V5
 │   ├── version6_results.csv    # V6
@@ -41,7 +49,9 @@ AlphaDent/
 │   ├── version10_results.csv   # V10
 │   ├── version11_results.csv   # V11 (Plan D, regressed)
 │   ├── version12_results.csv   # V12 (P2 head, did not beat baseline)
-│   └── version13_results.csv   # V13 (tile training, severe regression −0.11)
+│   ├── version13_results.csv   # V13 (tile training, severe regression −0.11)
+│   ├── version14_results.csv   # MedSAM Phase 0 eval (per-class AP per variant; NO-GO)
+│   └── version15_results.csv   # V15 (NWD box loss, λ=0.5/C=5.0) — underwhelmed, sat at plateau
 ├── src/
 │   ├── 01-yolo-seg-baseline-training-alphadent.ipynb   # V13: tile + train (self-contained)
 │   ├── 02-alphadent-yolo-seg-submission.ipynb          # V13: tiled inference + submission
@@ -49,21 +59,25 @@ AlphaDent/
 │   ├── 04-stage2-oracle-roi.ipynb                      # Phase 0 oracle for two-stage detect-then-refine
 │   ├── 05-stage1-recall-and-transfer.ipynb             # Phase 1a/1b: real V6 Stage-1 recall + transfer check
 │   ├── 06-stage2-phase1c-real-boxes.ipynb              # Phase 1c: retrain Stage 2 on real V6 boxes + bg class (FAILED)
-│   └── 07-medsam-mask-refine.ipynb                     # MedSAM Phase 0: keep V6 boxes, swap mask (zero-training)
-├── stage2/                     # Stage-2 (detect-then-refine) run outputs
-│   ├── stage2_history.csv      # Phase 0 per-epoch training curve
-│   ├── stage2_results.csv      # Phase 0 per-class oracle AP vs V6
-│   ├── phase1a_recall.csv      # Phase 1a V6-as-Stage-1 localization recall
-│   ├── phase1b_pipeline.csv    # Phase 1b transfer-check pipeline AP
-│   ├── phase1c_pipeline.csv    # Phase 1c per-class pipeline AP (FAILED, no-go)
-│   └── stage2_p1c_history.csv  # Phase 1c per-epoch training curve
+│   ├── 07-medsam-mask-refine.ipynb                     # MedSAM Phase 0: keep V6 boxes, swap mask (zero-training, NO-GO)
+│   ├── 08-yolo-seg-nwd-training.ipynb                  # V15: yolov8s-seg + NWD box loss (single variable vs V6)
+│   ├── 09-ensemble-tta-eval.ipynb                      # V6+V10 ensemble + hflip TTA, val gain check (comparable Mask mAP)
+│   └── 10-ensemble-tta-submission.ipynb                # ensemble + TTA submission (conf floor tuned on val) — LB 0.31189
 ├── models/                     # Local trained checkpoints — NOT tracked in git (see .gitignore)
-│   ├── version6_best.pt        # V6 detector (production model, ≈0.234)
-│   ├── version10_best.pt       # V10 detector (≈tied with V6)
-│   └── stage2_p1c_best.pt      # Phase 1c Stage-2 refiner (research result)
+│   ├── version6_best.pt        # V6 detector (production; ensemble member)
+│   ├── version10_best.pt       # V10 detector (production; ensemble member)
+│   └── version15_best.pt       # V15 (NWD) — line on hold
 └── tools/
-    └── tile_yolo_seg.py        # V13 canonical tiling library (mirrored inline into 01 & 02)
+    ├── val_native_yolo_seg.py      # canonical native YOLO Mask mAP baseline (Exp 1A)
+    ├── sweep_yolo_conf.py          # submission confidence-threshold sweep (Exp 1D)
+    └── make_clahe_yolo_dataset.py  # CLAHE preprocessing dataset builder (Exp 1B)
 ```
+
+> **Cleanup 2026-06-24:** the failed-line files were removed — `stage2/` (two-stage run outputs +
+> `stage2_best.pt`), `models/stage2_p1c_best.pt`, `tools/tile_yolo_seg.py` (V13 tiling),
+> `tools/infer_sahi_yolo_seg.py` (SAHI), `experiments/train_small_object_friendly.py` (V11 Plan D),
+> and `configs/yolov8s-seg-p2.yaml` (V12 P2 head). The experiments remain documented below and in the
+> experiment log — only the now-dead files are gone.
 
 > **Not tracked in git:** dataset images/labels, model weight files (`*.pt`, incl. the `models/` folder), YOLO training output directories (`runs/`).
 
@@ -148,7 +162,8 @@ ResNet18 encoder, class + fine mask).
 **Phase 0 result (30 epochs, oracle):** the small Caries classes *with adequate support* clearly
 beat V6 — Caries 1/2/3/5 by **+0.11 to +0.22** Mask AP. Oracle mAP50-95 = **0.312**, Hybrid
 (large→V6, small→Stage2) = **0.331**, vs V6 0.210. Crown regressed (−0.165), confirming large
-objects should route to V6. Per-class numbers are archived in `stage2/stage2_results.csv`.
+objects should route to V6. (Per-class run outputs were under `stage2/`, removed in the 2026-06-24
+cleanup; the numbers above are the record.)
 
 **Honest caveats (these define Phase 1):** the oracle assumes **perfect recall** (GT boxes), so
 part of the gain is perfect localization, not refinement — the real ceiling depends on a real
@@ -161,7 +176,7 @@ Stage-1 recall first, then retrains Stage 2 on real detector boxes **with an add
 recall — the gate) and **Phase 1b** (transfer check: V6 boxes → current `stage2_best.pt`, `full` and
 `TP-only` pipeline Mask mAP). It needs the V6 detector + `stage2_best.pt` as Kaggle inputs.
 
-**Phase 1a/1b result (`stage2/phase1a_recall.csv`, `phase1b_pipeline.csv`):** the gate **passed** —
+**Phase 1a/1b result:** the gate **passed** —
 at conf=0.05 V6 localizes the supported small Caries (recall@IoU0.3: Caries 1/2/3/5 ≈ 0.89/0.73/0.58/0.80;
 recall collapses 40–60% if conf is raised to 0.25, so Stage 1 must stay at conf≈0.05). But the transfer
 was **weak**: `full@0.05 = 0.182` (below V6, no background class to reject FPs) and even the perfect-FP
@@ -172,7 +187,7 @@ box-framing gap + the missing background class.
 **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→foreground, <0.3→background, [0.3,0.5)→ignored;
 background subsampled ~3:1) with an added **background class** (`nc+1`), warm-started from `stage2_best.pt`.
 
-**Phase 1c result (`stage2/phase1c_pipeline.csv`, `stage2_p1c_history.csv`) — FAILED, NO-GO.** Every
+**Phase 1c result — FAILED, NO-GO.** Every
 pipeline variant scored **below V6 0.2099**: `full@0.05` = 0.157, `TPonly@0.05` (perfect FP rejection,
 the ceiling) = 0.178, and the derived hybrid (large→V6, small→Stage2) ≈ 0.203 — all inside or below the
 noise band. The oracle's Caries gains **evaporated on real boxes** (TPonly Caries 1/2/5 = 0.079/0.061/0.107
@@ -181,6 +196,82 @@ and still ≈V6, the whole oracle→real gap is **Stage-1 box quality**, not Sta
 run at conf≈0.05 to recall small Caries, but those boxes are too loose to frame the ROI like the tight GT
 boxes the oracle used. **The two-stage detect-then-refine line is closed; V6 (≈0.234) remains the
 production model.** Next direction is all-class / capacity levers (TTA, V6+V10 ensemble, larger backbone).
+
+## MedSAM mask refinement — Phase 0 (run 2026-06-23, NO-GO for a zero-shot swap)
+
+A *different* lever from the two-stage line (full design in
+[`docs/medsam_refine_research_notes.md`](docs/medsam_refine_research_notes.md)): keep V6's box +
+class + confidence and only **swap the coarse YOLO mask for a MedSAM (box-prompted) mask**, targeting
+**large-class mask IoU** (where the mAP weight is and where V6's boxes are trustworthy), not
+small-object localization. `src/07-medsam-mask-refine.ipynb` runs Phase 0 (zero-training); results in
+`results/version14_results.csv`.
+
+**Result (comparable mask-mAP, same matcher for every variant; V6 native baseline in-notebook):**
+
+| Variant | Aggregate (9 cls) | Large (Abr/Crown/Fill) |
+|---|---:|---:|
+| `v6_native@0.05` | 0.1970 | 0.4938 |
+| `v6box_medsam@0.05` (real pipeline) | **0.1822** (−0.015) | **0.4989** (+0.005) |
+| `oracle_medsam` (GT-box ceiling) | **0.3568** | **0.6928** |
+
+**NO-GO for a blanket swap:** the large-class gain (+0.005) is inside the ~0.003 noise band and the
+aggregate regressed (−0.015). The win is real but **concentrated in Abrasion alone** (0.618 → 0.665,
++0.047); Crown regressed (−0.035) and the small Caries **collapsed** (Caries 1/2: ~0.1 → 0.017,
+MedSAM segments the whole tooth on a loose box). The GT-box oracle is the project's highest (0.357 /
+0.693) and even rescues the small Caries — so the failure is **box quality, not MedSAM mask
+quality**: the same wall the two-stage line hit. V6 (≈0.234) stays production; a decoder-only
+fine-tune (helps the domain gap, not the box gap) or a pivot to all-class levers are the open options.
+
+## V15 — NWD box loss (built 2026-06-23, not yet trained)
+
+Both closed lines above identified the **same wall: loose tiny boxes.** V15 attacks it at the source
+instead of refining after the fact. The root cause is that **IoU/CIoU is unstable for tiny boxes** (a
+2 px shift on an 8 px lesion swings IoU wildly), so the small-Caries boxes never tighten. V15 blends
+**NWD (Normalized Gaussian Wasserstein Distance)** — which models each box as a 2-D Gaussian and is
+smooth under small shifts — into the box regression loss:
+
+```
+box_loss = λ·(1 − CIoU) + (1 − λ)·(1 − NWD)
+```
+
+Large boxes keep being driven by CIoU; small boxes get the stable NWD signal. **Single variable vs
+V6:** only the regression loss changes (model, full-image input, `imgsz=768`, augmentation, and data
+are the clean V6 baseline), so the in-training Mask mAP50-95 is directly comparable to V6 ≈0.234.
+
+Implemented in `src/08-yolo-seg-nwd-training.ipynb` (a new training notebook; `src/01` is left
+untouched) by monkey-patching `ultralytics.utils.loss.BboxLoss.forward`. Full design, knobs
+(`NWD_IOU_RATIO`, `NWD_CONSTANT`), the recommended sweep order, and the pre-registered eval (leading
+indicator = small-Caries localization recall@IoU0.5 via `src/05`) are in
+[`docs/small_object_box_quality_notes.md`](docs/small_object_box_quality_notes.md).
+
+**V15 result (trained, default λ=0.5 / C=5.0 — UNDERWHELMED).** `results/version15_results.csv`:
+best Mask mAP50-95 ≈ 0.24 (spiky; sustained ~0.228), i.e. roughly at the V6 plateau, no clear win.
+The pre-registered leading indicator (re-ran `src/05` with V15 vs V6) **regressed**: small-Caries
+recall@IoU0.5 fell on all supported classes (Caries 1/2/3/5 mean −0.035) and the large classes also
+dropped — blending NWD globally at λ=0.5 diluted the CIoU signal the large/medium boxes relied on,
+and C=5.0 bought no compensating small-box tightening. This is "this knob setting failed," not "NWD
+is dead" (a C-sweep or a size-gated NWD remain untried), but the line is **on hold** — the
+inference-time ensemble below is the productive direction.
+
+## V6+V10 ensemble + hflip TTA — first leaderboard gain (LB 0.31189)
+
+After the small-object lines (two-stage, MedSAM, NWD) all hit the same box-quality wall, the
+productive lever turned out to be the **all-class, zero-training** one: ensemble the two near-tied
+diverse models (V6, V10) and add test-time augmentation.
+
+- **Pipeline:** full-image inference; V6 and V10 each predict on the image **and its horizontal
+  flip** (detections mirrored back); all detections are pooled and merged by **class-wise NMS**
+  (IoU=0.6). The confidence floor is **tuned on val** (`src/10` sweeps it against the comparable
+  Mask mAP and picks the highest floor within the 0.003 noise band of the best). Ultralytics
+  `augment=True` is a no-op for seg models, so TTA is done manually (hflip).
+- **Val check (`src/09`, comparable Mask mAP):** `Ensemble+TTA` = **0.2134** vs V6 anchor **0.2053**
+  (**+0.0082**); large classes all up (Abrasion/Filling/Crown), no regression. Attribution: TTA
+  alone (+0.0026) and ensemble alone (+0.0031) each sit at the noise edge — only the **combination**
+  clears it, so the full 4-pass `Ensemble+TTA` is needed.
+- **Leaderboard:** `0.31189` vs single V6 `0.27047` (**+0.0414**) — the LB gain is ~5× the val-metric
+  delta, i.e. the local comparable metric badly under-predicted the real gain.
+- **Status: this is the production submission.** `src/09` = the val gain check, `src/10` = the
+  submission builder. Zero additional training.
 
 ---
 
