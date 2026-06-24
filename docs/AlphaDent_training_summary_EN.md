@@ -853,7 +853,7 @@ Conclusion:
 
 ## 4. Recommended Next Direction
 
-### Active experiment — V15: NWD box loss (built 2026-06-23, not yet trained)
+### V15: NWD box loss (trained 2026-06-24, default λ=0.5/C=5.0 — UNDERWHELMED)
 
 Both closed refinement lines (two-stage in `src/04`–`src/06`, MedSAM in `src/07`) hit the **same
 wall: V6's tiny boxes are loose.** Each validated a large GT-box **oracle** ceiling for the small
@@ -869,6 +869,14 @@ tiny GTs of positive samples. **NWD (Normalized Gaussian Wasserstein Distance)**
 (leading indicator = small-Caries localization recall@IoU0.5 via `src/05`) are in
 `docs/small_object_box_quality_notes.md`. Versioning: V14 = the MedSAM eval table, so this training
 run is **V15** → `results/version15_results.csv`.
+
+**Result (trained, default λ=0.5/C=5.0 — UNDERWHELMED):** best Mask mAP50-95 ≈0.24 (a single-epoch
+spike; sustained ~0.228 = at the V6 plateau, no clear win). The pre-registered leading indicator
+(`src/05` recall@IoU0.5, V15 vs V6) **regressed** on all supported Caries (1/2/3/5 mean −0.035) and on
+the large classes — blending NWD globally at λ=0.5 diluted the CIoU gradient the large/medium boxes
+rely on, with no compensating small-box tightening. "This knob failed," not "NWD is dead" (a C-sweep
+{3,5,8} and a size-gated NWD remain untried), but the line is **on hold**. The productive direction
+turned out to be the all-class **V6+V10 ensemble + hflip TTA** (public LB 0.31189 — see §7).
 
 ---
 

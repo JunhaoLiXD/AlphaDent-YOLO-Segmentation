@@ -305,8 +305,9 @@ These rules are fixed *before* running so a noisy number cannot retroactively ju
    if small-Caries AP there stays well above V6, Phase 1c is justified. Diagnostic, **not** a
    go/no-go test on its own.
 
-4. **Phase 1c — the real Phase 1: retrain Stage 2 on Stage-1 boxes + a background class.** → BUILT in
-   **`src/06-stage2-phase1c-real-boxes.ipynb`** (not yet trained). Implemented decisions:
+4. **Phase 1c — the real Phase 1: retrain Stage 2 on Stage-1 boxes + a background class.** → TRAINED
+   2026-06-18 in **`src/06-stage2-phase1c-real-boxes.ipynb`** → **FAILED/NO-GO** (every variant < V6
+   0.2099; see the "Phase 1c result" section above). Implemented decisions:
    - ROI training data from **V6's predicted boxes on the TRAIN split** at **conf=0.05**: box-IoU **≥0.5**
      to a GT → that lesion class + the GT mask (rasterized in the V6-box ROI frame); IoU **<0.3** →
      **background** class + empty mask; the **[0.3, 0.5) band is IGNORED** (ambiguous). Background

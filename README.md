@@ -96,10 +96,18 @@ AlphaDent/
 | V11 | YOLOv8s-seg | 768 | Plan D: `mosaic=0`, `mixup=0`, `copy_paste=0.2` | 0.2135 | **−0.0206** |
 | V12 | YOLOv8s-seg + P2 head | 768 | Stride-4 (P2) small-object segment head | 0.2215* | **−0.0126** |
 | V13 | YOLOv8s-seg (tiles) | 640/tile | Crop / tile-based training (changes the input) | 0.0993† | **−0.1106** |
+| V14 | (eval-only) | 768 | MedSAM box-prompted mask swap, zero training | —‡ | NO-GO |
+| V15 | YOLOv8s-seg | 768 | NWD-blended box regression loss (λ=0.5, C=5.0) | ~0.24§ | ≈0 (plateau) |
 
 \* V12's 0.2215 is a single-epoch spike (ep32); the sustained level is ~0.21. See the V12 section in the experiment log.
 
 † V13's 0.0993 is the comparable full-image (tiled + merged) Mask mAP50-95, vs V6 re-scored with the same code (0.2099) — not vs the historical 0.234. See the V13 section.
+
+‡ V14 is an **eval-only** experiment (MedSAM Phase 0, `results/version14_results.csv` is a per-class AP table, not a per-epoch training curve), so it has no single "best Mask mAP50-95". The blanket mask swap regressed the aggregate (−0.015); the win was Abrasion-only. See the MedSAM section.
+
+§ V15's best 0.2415 is a single-epoch spike; the sustained level is ~0.228, i.e. at the V6 plateau (no clear win). Its box-quality leading indicator (small-Caries recall@IoU0.5) **regressed**, so the NWD-default run failed. See the V15 section.
+
+> **Best submission is not a training version:** the production submission is the **V6+V10 ensemble + hflip TTA** (public LB **0.31189**, see the Current Best Result section), an inference-time combination of V6 and V10 — not a single trained model, so it is not a row in this table.
 
 See [`docs/AlphaDent_training_summary_EN.md`](docs/AlphaDent_training_summary_EN.md) for the full experiment log with per-version analysis, interpretation, and conclusions.
 
@@ -222,7 +230,7 @@ MedSAM segments the whole tooth on a loose box). The GT-box oracle is the projec
 quality**: the same wall the two-stage line hit. V6 (≈0.234) stays production; a decoder-only
 fine-tune (helps the domain gap, not the box gap) or a pivot to all-class levers are the open options.
 
-## V15 — NWD box loss (built 2026-06-23, not yet trained)
+## V15 — NWD box loss (trained, default λ=0.5/C=5.0 — UNDERWHELMED)
 
 Both closed lines above identified the **same wall: loose tiny boxes.** V15 attacks it at the source
 instead of refining after the fact. The root cause is that **IoU/CIoU is unstable for tiny boxes** (a

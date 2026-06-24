@@ -159,7 +159,7 @@ This is the *only* training step in the whole plan, and it is conditional on Pha
 
 ---
 
-## Phase 0 notebook — BUILT (`src/07-medsam-mask-refine.ipynb`, 23 cells, not yet run)
+## Phase 0 notebook — RUN, NO-GO (`src/07-medsam-mask-refine.ipynb`, 23 cells)
 
 - **Inputs (Kaggle):** `version6_best.pt` (auto-detected by the `version6` keyword, MedSAM/stage2
   excluded so they never collide) + a MedSAM ViT-B checkpoint (`medsam_vit_b.pth`, auto-detected by

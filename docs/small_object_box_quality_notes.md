@@ -1,9 +1,15 @@
 # Small-Object Box-Quality Research Notes — fix the loose tiny boxes at the loss level (NWD)
 
-> **Status (2026-06-23): V15 BUILT in `src/08-yolo-seg-nwd-training.ipynb`, not yet trained.**
-> Single-variable vs V6 (full-image, `imgsz=768`, clean aug, stock `yolov8s-seg`) — the ONLY change
-> is an **NWD-blended box regression loss**. Versioning note: `results/version14_results.csv` is the
-> MedSAM Phase-0 eval table, so this *training* experiment is **V15** → `results/version15_results.csv`.
+> **Status (2026-06-24): V15 TRAINED at the default λ=0.5 / C=5.0 — UNDERWHELMED.** Best Mask
+> mAP50-95 ≈0.24 (spiky; sustained ~0.228 = at the V6 plateau, no clear win), and the pre-registered
+> leading indicator (`src/05` recall@IoU0.5) **regressed** on all supported Caries (mean −0.035) and on
+> the large classes. Diagnosis: blending NWD globally at λ=0.5 diluted the CIoU signal the large/medium
+> boxes rely on (NWD saturates for big boxes at C=5.0), with no compensating small-box tightening. This
+> is "this knob setting failed," **not** "NWD is dead" — a C-sweep {3,5,8} and a **size-gated NWD**
+> (small boxes only, large keep pure CIoU) remain untried. Line **on hold**; the all-class
+> **V6+V10 ensemble + hflip TTA** (public LB 0.31189) became the productive direction.
+> `results/version15_results.csv`. Single-variable vs V6 (full-image, `imgsz=768`, clean aug, stock
+> `yolov8s-seg`) — the only change was the NWD-blended box regression loss.
 
 ---
 
@@ -71,7 +77,7 @@ NWD = exp( − sqrt(W2² + eps) / C )
 
 ---
 
-## Implementation — `src/08-yolo-seg-nwd-training.ipynb` (BUILT, not trained)
+## Implementation — `src/08-yolo-seg-nwd-training.ipynb` (TRAINED; default λ=0.5/C=5.0 underwhelmed)
 
 - **New training notebook** (per the user's preference — do NOT rewire `src/01`; one concern per
   notebook, matching `src/04`–`src/07`). Kaggle-self-contained; reuses `src/01`'s proven dataset-YAML
