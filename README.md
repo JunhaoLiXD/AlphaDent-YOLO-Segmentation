@@ -7,15 +7,16 @@ The task is to detect and segment dental findings (Caries, Crown, Abrasion, etc.
 
 ## Current Best Result
 
-**Best submission (public leaderboard): `0.31189`** — a **V6+V10 ensemble + horizontal-flip TTA**
-(full-image inference, class-wise NMS), up from **`0.27047`** for the single V6 model (**+0.0414**).
-This is the **first result to beat single-model V6 on the leaderboard**, and it took **zero
-additional training** — `src/09` validated the gain on val, `src/10` produces the submission.
+**Best submission (public leaderboard): `0.31753`** — a **V6+V10 ensemble + multi-view TTA**
+(hflip + vflip + multi-scale 640/896, full-image inference, class-wise NMS), up from **`0.27047`**
+for the single V6 model (**+0.0471**). This took **zero additional training** — `src/09` validated
+the TTA stack on val, `src/10` produces the submission.
 
 | Approach | Public LB | Notes |
 |---|---:|---|
-| **V6+V10 ensemble + hflip TTA** | **0.31189** | production submission (`src/10`) |
-| V6 single model | 0.27047 | previous best submission |
+| **V6+V10 ensemble + multi-view TTA (hflip+vflip+mscale)** | **0.31753** | production submission (`src/10`) |
+| V6+V10 ensemble + hflip-only TTA | 0.31189 | previous best (`src/10` hflip-only) |
+| V6 single model | 0.27047 | first baseline submission |
 
 The primary *development* metric is **Mask mAP50-95** (val), where the single-model full-image
 approach plateaued at ~0.23–0.24 (V6 0.2336, V10 0.2341). Notably the **leaderboard ensemble gain
@@ -61,8 +62,8 @@ AlphaDent/
 │   ├── 06-stage2-phase1c-real-boxes.ipynb              # Phase 1c: retrain Stage 2 on real V6 boxes + bg class (FAILED)
 │   ├── 07-medsam-mask-refine.ipynb                     # MedSAM Phase 0: keep V6 boxes, swap mask (zero-training, NO-GO)
 │   ├── 08-yolo-seg-nwd-training.ipynb                  # V15: yolov8s-seg + NWD box loss (single variable vs V6)
-│   ├── 09-ensemble-tta-eval.ipynb                      # V6+V10 ensemble + hflip TTA, val gain check (comparable Mask mAP)
-│   └── 10-ensemble-tta-submission.ipynb                # ensemble + TTA submission (conf floor tuned on val) — LB 0.31189
+│   ├── 09-ensemble-tta-eval.ipynb                      # V6+V10 ensemble + TTA val check; §7b sweeps NMS-IoU/vflip/mscale/conf-weight
+│   └── 10-ensemble-tta-submission.ipynb                # ensemble + multi-view TTA (hflip+vflip+mscale) submission, conf floor on val — LB 0.31753
 ├── models/                     # Local trained checkpoints — NOT tracked in git (see .gitignore)
 │   ├── version6_best.pt        # V6 detector (production; ensemble member)
 │   ├── version10_best.pt       # V10 detector (production; ensemble member)
@@ -107,7 +108,7 @@ AlphaDent/
 
 § V15's best 0.2415 is a single-epoch spike; the sustained level is ~0.228, i.e. at the V6 plateau (no clear win). Its box-quality leading indicator (small-Caries recall@IoU0.5) **regressed**, so the NWD-default run failed. See the V15 section.
 
-> **Best submission is not a training version:** the production submission is the **V6+V10 ensemble + hflip TTA** (public LB **0.31189**, see the Current Best Result section), an inference-time combination of V6 and V10 — not a single trained model, so it is not a row in this table.
+> **Best submission is not a training version:** the production submission is the **V6+V10 ensemble + multi-view TTA** (hflip+vflip+mscale; public LB **0.31753**, see the Current Best Result section), an inference-time combination of V6 and V10 — not a single trained model, so it is not a row in this table.
 
 See [`docs/AlphaDent_training_summary_EN.md`](docs/AlphaDent_training_summary_EN.md) for the full experiment log with per-version analysis, interpretation, and conclusions.
 
@@ -261,25 +262,40 @@ and C=5.0 bought no compensating small-box tightening. This is "this knob settin
 is dead" (a C-sweep or a size-gated NWD remain untried), but the line is **on hold** — the
 inference-time ensemble below is the productive direction.
 
-## V6+V10 ensemble + hflip TTA — first leaderboard gain (LB 0.31189)
+## V6+V10 ensemble + multi-view TTA — leaderboard gains (LB 0.31753)
 
 After the small-object lines (two-stage, MedSAM, NWD) all hit the same box-quality wall, the
 productive lever turned out to be the **all-class, zero-training** one: ensemble the two near-tied
 diverse models (V6, V10) and add test-time augmentation.
 
-- **Pipeline:** full-image inference; V6 and V10 each predict on the image **and its horizontal
-  flip** (detections mirrored back); all detections are pooled and merged by **class-wise NMS**
-  (IoU=0.6). The confidence floor is **tuned on val** (`src/10` sweeps it against the comparable
-  Mask mAP and picks the highest floor within the 0.003 noise band of the best). Ultralytics
-  `augment=True` is a no-op for seg models, so TTA is done manually (hflip).
-- **Val check (`src/09`, comparable Mask mAP):** `Ensemble+TTA` = **0.2134** vs V6 anchor **0.2053**
-  (**+0.0082**); large classes all up (Abrasion/Filling/Crown), no regression. Attribution: TTA
-  alone (+0.0026) and ensemble alone (+0.0031) each sit at the noise edge — only the **combination**
-  clears it, so the full 4-pass `Ensemble+TTA` is needed.
-- **Leaderboard:** `0.31189` vs single V6 `0.27047` (**+0.0414**) — the LB gain is ~5× the val-metric
-  delta, i.e. the local comparable metric badly under-predicted the real gain.
-- **Status: this is the production submission.** `src/09` = the val gain check, `src/10` = the
-  submission builder. Zero additional training.
+- **Pipeline:** full-image inference; V6 and V10 each predict on the image and its augmented views,
+  detections mirrored back, all pooled and merged by **class-wise NMS** (IoU=0.6). The confidence
+  floor is **tuned on val** (`src/10` sweeps it against the comparable Mask mAP and picks the highest
+  floor within the 0.003 noise band of the best). Ultralytics `augment=True` is a no-op for seg
+  models, so TTA is done manually.
+- **Step 1 — hflip-only ensemble (`src/09` §1–8, first LB gain):** views = orig + hflip. Val check
+  `Ensemble+TTA` = **0.2134** vs V6 anchor **0.2053** (**+0.0082**); large classes all up, no
+  regression. Attribution: TTA alone (+0.0026) and ensemble alone (+0.0031) each sit at the noise
+  edge — only the **combination** clears it. **LB `0.31189`** vs single V6 `0.27047` (**+0.0414**) —
+  the LB gain is ~5× the val delta; the local metric badly under-predicted the real gain.
+- **Step 2 — multi-view TTA follow-up (`src/09` §7b, current production):** swept the cheap knobs
+  vs the hflip-only baseline — NMS-IoU {0.50,0.55,0.60}, +vflip, +multi-scale (640/896), and
+  per-model conf-weighting. **Only `+vflip+mscale` won:** val **0.2173** (+0.0038 vs baseline,
+  large classes held at 0.530); NMS-IoU and conf-weighting were noise/negative, and vflip *alone*
+  was −0.0011 (it only helps combined with multi-scale). Wired into `src/10` (views = orig + hflip
+  + vflip + 640 + 896 → 10 forward passes/image). **LB `0.31753`** vs hflip-only `0.31189`
+  (**+0.0056**) — again the val delta (+0.0038) slightly under-predicted the LB (+0.0056).
+- **Step 3 — 3-model ensemble (add V9 = yolov8m), tested, no aggregate help:** since a bigger
+  *single* model was already a dead end (V9 ≈ 0.232 ≈ V6), V9 was tried only as a more-diverse 3rd
+  ensemble member (zero training). `src/09` §7b: `Ens3 +vflip+mscale` = **0.2154**, i.e. **−0.0019
+  vs the 2-model `+vflip+mscale`** (within noise). V9 measurably *lifts the large classes*
+  (large 0.529→0.540) but *drags the small Caries down*, and large is only 3/9 of the
+  per-class-averaged mAP → it cancels out. **Conclusion: the ensemble/diversity lever is exhausted;
+  keep the 2-model config, do not attach V9 for submission.** The notebooks keep V9 auto-detect (omit
+  the weights → 2-model) for the record.
+- **Status: 2-model `+vflip+mscale` is the production submission (LB 0.31753).** `src/09` = the val
+  checks (§1–8 base, §7b follow-up + 3-model sweep), `src/10` = the submission builder
+  (`ADD_VFLIP`/`EXTRA_SCALES` knobs off → hflip-only; omit V9 → 2-model). Zero additional training.
 
 ---
 

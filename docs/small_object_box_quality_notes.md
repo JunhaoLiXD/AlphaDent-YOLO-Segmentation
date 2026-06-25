@@ -7,7 +7,7 @@
 > boxes rely on (NWD saturates for big boxes at C=5.0), with no compensating small-box tightening. This
 > is "this knob setting failed," **not** "NWD is dead" — a C-sweep {3,5,8} and a **size-gated NWD**
 > (small boxes only, large keep pure CIoU) remain untried. Line **on hold**; the all-class
-> **V6+V10 ensemble + hflip TTA** (public LB 0.31189) became the productive direction.
+> **V6+V10 ensemble + multi-view TTA** (hflip+vflip+multi-scale; public LB 0.31753) became the productive direction.
 > `results/version15_results.csv`. Single-variable vs V6 (full-image, `imgsz=768`, clean aug, stock
 > `yolov8s-seg`) — the only change was the NWD-blended box regression loss.
 

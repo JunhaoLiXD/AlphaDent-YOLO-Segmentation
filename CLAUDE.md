@@ -8,9 +8,10 @@ YOLOv8 **instance segmentation** for the Kaggle competition *AlphaDent: Teeth Ma
 detect and segment dental findings (Caries 1–6, Crown, Abrasion, etc.) on panoramic X-rays.
 The development metric that matters is **Mask mAP50-95** (`metrics/mAP50-95(M)` in the CSVs).
 
-Current best **submission**: **V6+V10 ensemble + hflip TTA → public LB 0.31189** (vs single V6 0.27047,
-**+0.0414**; zero training; `src/09` val check, `src/10` submission). Best **single model**: **~0.234**
-Mask mAP50-95 (V6 imgsz=768, V10 ≈ tied) — the ensemble is built from these two.
+Current best **submission**: **V6+V10 ensemble + multi-view TTA (hflip+vflip+multi-scale 640/896) →
+public LB 0.31753** (vs hflip-only ensemble 0.31189, **+0.0056**; vs single V6 0.27047, **+0.0471**;
+zero training; `src/09` val checks incl. §7b knob sweep, `src/10` submission). Best **single model**:
+**~0.234** Mask mAP50-95 (V6 imgsz=768, V10 ≈ tied) — the ensemble is built from these two.
 The full-image approach is plateaued at ~0.23–0.24. V11 (Plan D, −0.020), V12 (P2 head, no gain),
 and V13 (crop/tile training, **−0.11** — the worst result) all failed to beat the baseline. Key
 reframing from V13: **mAP weight ≠ object count.** The "~78% of objects occupy <1% of the image"
@@ -45,8 +46,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/06-stage2-phase1c-real-boxes.ipynb` — Phase 1c (TRAINED, FAILED/NO-GO): retrain Stage 2 on **V6's predicted TRAIN boxes at conf=0.05** (IoU≥0.5→fg, <0.3→bg, [0.3,0.5)→ignore; bg subsampled ~3:1) with a **background class** (`nc+1`), warm-started from `stage2_best.pt`; evals full V6→Stage2 pipeline (`full@0.05` headline) + hybrid (large→V6) vs V6 0.2099. Same V6+`stage2_best.pt` Kaggle inputs as `src/05`. Two-stage line closed.
 - `src/07-medsam-mask-refine.ipynb` — MedSAM Phase 0 (RUN, NO-GO): keep V6 box/class/score, swap the coarse YOLO mask for a box-prompted MedSAM mask; eval-only, zero-training. Result in `results/version14_results.csv` (renamed from `medsam_phase0_results.csv`). Blanket swap regressed aggregate; win was Abrasion-only; failure = box quality not mask quality (`docs/medsam_refine_research_notes.md`).
 - `src/08-yolo-seg-nwd-training.ipynb` — **V15 (TRAINED, default λ=0.5/C=5.0 UNDERWHELMED)**: `yolov8s-seg` + **NWD-blended box regression loss** (`box_loss = λ·(1−CIoU) + (1−λ)·(1−NWD)`) to tighten loose tiny boxes — the wall both closed lines hit. New **training** notebook (does NOT rewire `src/01`); single variable vs V6 (full-image, imgsz=768, clean aug). Monkey-patches `BboxLoss.forward` (uses `*extra` to survive the ≥8.3 `imgsz,stride` signature). Knobs `NWD_IOU_RATIO`/`NWD_CONSTANT` in §6. Saves `results/version15_results.csv`. Design: `docs/small_object_box_quality_notes.md`. **Result: best ≈0.24 (spiky, sustained ~0.228 = at the plateau); the `src/05` leading indicator (recall@IoU0.5) REGRESSED on all supported Caries (mean −0.035) + large classes → NWD-default failed; line on hold (C-sweep / size-gate untried).**
-- `src/09-ensemble-tta-eval.ipynb` — **V6+V10 ensemble + manual hflip TTA, val gain check (eval-only).** Full-image; each model on image+hflip (mirrored back), pooled + class-wise NMS (IoU 0.6); scored with the src/03/04/05 comparable Mask mAP. 6 variants for attribution; headline `Ensemble+TTA` 0.2134 vs V6 0.2053 (+0.0082, large classes up, no regression). Ultralytics `augment=True` is a **no-op for seg** → TTA is manual hflip. Auto-detects `version6`/`version10` weights.
-- `src/10-ensemble-tta-submission.ipynb` — **THE PRODUCTION SUBMISSION.** Same ensemble+TTA pipeline on the test set → `submission.csv` (`id,patient_id,class_id,confidence,poly`). **Confidence floor tuned on val** (sweep the comparable Mask mAP, keep the highest floor within 0.003 of best). **Public LB 0.31189** vs single V6 0.27047 (**+0.0414**). Inputs: competition dataset + V6/V10 + the training `yolo_seg_train.yaml` (for the floor sweep). `ALLOW_INTERNET_INSTALL=True` (this comp allows net).
+- `src/09-ensemble-tta-eval.ipynb` — **V6+V10 ensemble + manual TTA, val gain check (eval-only).** Full-image; each model on image+augmented views (mirrored back), pooled + class-wise NMS (IoU 0.6); scored with the src/03/04/05 comparable Mask mAP. §1–8: 6-variant attribution, headline `Ensemble+TTA` (hflip) 0.2134 vs V6 0.2053 (+0.0082). **§7b: cheap follow-up knob sweep** vs that baseline — NMS-IoU {0.50,0.55,0.60}, +vflip, +multi-scale(640/896), per-model conf-weighting; **only `+vflip+mscale` won (0.2173, +0.0038, large held 0.530)**; vflip-alone −0.0011, conf-weighting/NMS-IoU noise. §7b also runs the **3-model check** (add V9=yolov8m): `Ens3 +vflip+mscale` = 0.2154 = **−0.0019 vs 2-model → no aggregate help** (V9 lifts large 0.529→0.540 but drags Caries). Ultralytics `augment=True` is a **no-op for seg** → TTA is manual. Auto-detects `version6`/`version10`/`version9` weights (V9 optional → graceful 2-model).
+- `src/10-ensemble-tta-submission.ipynb` — **THE PRODUCTION SUBMISSION.** Same ensemble pipeline with the §7b-winning **multi-view TTA (orig+hflip+vflip+640+896 = 10 fwd passes/img)** on the test set → `submission.csv` (`id,patient_id,class_id,confidence,poly`). Knobs `ADD_VFLIP`/`EXTRA_SCALES` (set off → revert to hflip-only). **Confidence floor tuned on val** (sweep the comparable Mask mAP, keep the highest floor within 0.003 of best). **Public LB 0.31753** vs hflip-only 0.31189 (**+0.0056**) vs single V6 0.27047 (**+0.0471**). Auto-detects V9 too and runs a 3-model ensemble if attached (15 fwd passes/img) — but the §7b check found V9 gives no aggregate gain, so **production omits V9 (2-model)**. Inputs: competition dataset + V6/V10 (+ optional V9) + the training `yolo_seg_train.yaml` (for the floor sweep). `ALLOW_INTERNET_INSTALL=True` (this comp allows net).
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
 - `tools/make_clahe_yolo_dataset.py` (1B, CLAHE dataset build), `tools/sweep_yolo_conf.py` (1D, submission threshold).
 - **Removed in the 2026-06-24 cleanup (dead-line files; experiments still documented in the log):**
@@ -60,9 +61,9 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 1. Train (`src/01`) at `imgsz=768`, change **one** major factor vs the previous best.
 2. Save the run's `results.csv` as `results/versionN_results.csv`.
 3. Diagnose with `tools/val_native_yolo_seg.py` (always evaluate `best.pt`, never `last.pt`).
-4. Build the submission. **Production submission = `src/10` (V6+V10 ensemble + hflip TTA, LB 0.31189)**,
-   which tunes the confidence floor on val itself. `src/02` is the older single-model/tiled submission
-   path; `tools/sweep_yolo_conf.py` is the standalone conf sweep.
+4. Build the submission. **Production submission = `src/10` (V6+V10 ensemble + multi-view TTA
+   hflip+vflip+mscale, LB 0.31753)**, which tunes the confidence floor on val itself. `src/02` is the
+   older single-model/tiled submission path; `tools/sweep_yolo_conf.py` is the standalone conf sweep.
 
 ## Experiment / versioning conventions
 
@@ -499,3 +500,56 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   of README + CLAUDE.md (structure trees, tool lists) and the EN/CN logs / research notes; **kept every
   experiment's narrative + conclusions** (the point was to drop dead *files*, not the *record*). The dated
   status-log entries above are left intact as historical record (they describe what was true on each date).
+
+### 2026-06-25 — Multi-view TTA follow-up `+vflip+mscale` → NEW BEST SUBMISSION (LB 0.31753)
+- **Context**: user asked whether to push further on the ensemble line (vs jumping to a new
+  segmentation/larger-backbone idea). Agreed order: spend the cheap ensemble follow-ups first, then a
+  larger backbone, then (only if warranted) a small-class semantic-seg hybrid behind an oracle check.
+- **`src/09` §7b added** (new section; §1–8 left untouched, incl. the `Ensemble+TTA=0.2134` anchor): a
+  single-variable knob sweep vs the hflip-only ensemble baseline — `ENS_NMS_IOU_GRID` {0.50,0.55,0.60},
+  `ADD_VFLIP`, `EXTRA_SCALES=[640,896]` (multi-scale TTA), `CONF_WEIGHT_SETS` (per-model conf weighting).
+  Reuses `predict_dets/nms_merge/score_variant`; prints an `mAP / vs base / vs0.2099 / large` table
+  (`large`=Abrasion/Crown/Filling); saves `ensemble_followups_eval.csv`. Gate: win iff val > +0.003 over
+  baseline AND large doesn't regress.
+- **§7b result (val, 83 imgs, vs Ensemble+TTA 0.2134):** NMS-IoU 0.50/0.55 = −0.0006/−0.0003 (noise);
+  **+vflip alone = −0.0011**; **+mscale alone = +0.0026** (large 0.524); **+vflip+mscale = +0.0038**
+  (0.2173, large **0.530** held); conf-weight wV10·0.8 / wV6·0.8 = −0.0021/−0.0022. **Only `+vflip+mscale`
+  cleared the gate.** Interaction noted: multi-scale is the workhorse; vflip helps only *combined* with it.
+- **`src/10` updated to the winner**: `predict_dets(imgsz=…)` + `vflip_back`; `ensemble_predict` now does
+  orig+hflip+vflip+640+896 per model = **10 fwd passes/img** (~2.5× hflip-only). New knobs `ADD_VFLIP`
+  (True) / `EXTRA_SCALES` ([640,896]); set off to revert to hflip-only. Conf-floor sweep auto-uses the
+  new pipeline. Submitted.
+- **LEADERBOARD: 0.31753 vs hflip-only 0.31189 → +0.0056** (vs single V6 0.27047 → +0.0471). Small but
+  **confirmed**. The val delta (+0.0038) again **under-predicted** the LB (+0.0056, ~1.5×) — same pattern
+  as the 7.1 hflip gain (val +0.008 → LB +0.041). The +0.0038 was a max-of-8 selection on a small val set
+  (selection noise), so the LB confirmation is what made it production, not the val number alone.
+- **Docs updated**: README (Current Best table + structure + §ensemble two-step rewrite), EN/CN logs
+  (§7 header + new §7.2 with the full follow-up table), CLAUDE.md (overview current-best + workflow +
+  notebooks list + this entry), project memory.
+
+### 2026-06-25 — 3-model ensemble (add V9 yolov8m) tested → NO aggregate help; ensemble line exhausted
+- **Context**: I suggested a larger backbone next; **user correctly pushed back — V9 already proved
+  bigger ≠ better as a SINGLE model** (yolov8m 0.232 ≈ V6 0.234). Reframed: the ensemble gain is a
+  **diversity** mechanism, not capacity, so the only sensible use of the bigger model is as a more-diverse
+  **3rd ensemble member** (zero training; user re-uploaded `version9_best.pt` to Kaggle).
+- **`src/09` + `src/10` wired for V9**: auto-detect (`version9`/`v9`, excluded from the v6/v10 finders;
+  `MANUAL_V9_PATH` override); when present → 3-model ensemble (graceful: omit weights → 2-model). `src/09`
+  cell-13 adds `Ens2`/`Ens3` (+ single V9, V9+TTA); §7b adds `Ens3+TTA (hflip)` + `Ens3 +vflip+mscale`
+  and prints the 3-vs-2 delta. `src/10` `ensemble_predict` loops `detectors.values()` → 3-model with the
+  full TTA stack = **15 fwd passes/img**. **Bug fixed (exposed by adding V9):** §7b's `+mscale` scale-keys
+  looped `for n in detectors` → would leak V9 scales into the 2-model variants; rewrote §7b model-set-explicit
+  via `keys_for(models, with_vflip, scales)`.
+- **Result (`src/09` §7b, val, vs 2-model Ensemble+TTA 0.2134):** 2-model `+vflip+mscale` =**0.2173**
+  (large 0.530); `Ens3+TTA (hflip)` =0.2168 (large **0.540**); `Ens3 +vflip+mscale` =**0.2154** (large
+  0.536). **3-model vs 2-model (both +vflip+mscale) = −0.0019 → within noise / no help.**
+- **Decisive nuance**: V9 **lifts the large classes** (0.529→0.540, +0.011 at hflip — yolov8m capacity
+  helps where boxes are already good) but **drags small Caries down** (lower small-object recall); large
+  is only 3/9 of the per-class-averaged mAP → cancels out, net slightly negative. **Same mAP-weight
+  story** (V9's strength lands on the near-saturated, low-marginal large classes). **The ensemble /
+  diversity lever is exhausted** — even an architecturally distinct yolov8m can't move aggregate.
+- **Decision**: keep **2-model `+vflip+mscale` (LB 0.31753) as production; do NOT submit 3-model / attach
+  V9.** Notebooks retain V9 auto-detect for the record. Rejected as not worth it: class-routing (3-model
+  for large, 2-model for Caries), down-weighting V9 (conf-weighting already lost on val). **Productive
+  next direction is OFF the ensemble/capacity axis:** the user's small-class **semantic-segmentation
+  hybrid** (bypasses the box entirely — the only lever that escapes the box-quality wall; run an oracle
+  upper-bound first), or accept the plateau. Docs updated: README + EN/CN §7 + this entry + project memory.

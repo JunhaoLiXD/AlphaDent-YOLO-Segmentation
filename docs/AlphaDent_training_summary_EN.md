@@ -876,7 +876,7 @@ spike; sustained ~0.228 = at the V6 plateau, no clear win). The pre-registered l
 the large classes — blending NWD globally at λ=0.5 diluted the CIoU gradient the large/medium boxes
 rely on, with no compensating small-box tightening. "This knob failed," not "NWD is dead" (a C-sweep
 {3,5,8} and a size-gated NWD remain untried), but the line is **on hold**. The productive direction
-turned out to be the all-class **V6+V10 ensemble + hflip TTA** (public LB 0.31189 — see §7).
+turned out to be the all-class **V6+V10 ensemble + multi-view TTA** (public LB 0.31753 — see §7).
 
 ---
 
@@ -1000,8 +1000,8 @@ Possible future directions:
 
 ## 6. Current Best Baseline
 
-**Best submission: the V6+V10 ensemble + hflip TTA (public LB 0.31189) — see §7.** The summary below
-covers the best *single model*, which is what the ensemble is built from.
+**Best submission: the V6+V10 ensemble + multi-view TTA (hflip+vflip+mscale; public LB 0.31753) — see §7.**
+The summary below covers the best *single model*, which is what the ensemble is built from.
 
 V10 is technically the highest-scoring single run, though the improvement over V6 is negligible
 (+0.0005). V11 (Plan D) regressed to 0.2135; V12 (P2 head) best 0.2215 (a single-epoch spike, ~0.21
@@ -1023,10 +1023,12 @@ higher recall) — but for **submission** use the ensemble in §7.
 
 ---
 
-## 7. V6+V10 ensemble + hflip TTA — first leaderboard gain (LB 0.31189)
+## 7. V6+V10 ensemble + multi-view TTA — leaderboard gains (LB 0.31189 → 0.31753)
 
 After the small-object lines (two-stage, MedSAM, NWD) all hit the same box-quality wall, the lever
-that finally moved the leaderboard was the **all-class, zero-training** one.
+that finally moved the leaderboard was the **all-class, zero-training** one. This came in two steps:
+**(7.1)** the hflip-only ensemble (first LB gain, 0.31189); **(7.2)** a cheap TTA-view follow-up that
+added vflip + multi-scale (current production, 0.31753).
 
 **Pipeline.** Full-image inference; V6 and V10 each predict on the image **and its horizontal flip**
 (detections mirrored back); all detections pooled and merged by **class-wise NMS** (IoU=0.6). The
@@ -1051,13 +1053,67 @@ TTA-alone and ensemble-alone each sit at the noise edge; **only the combination 
 full 4-pass `Ensemble+TTA` is required. Large classes all rose (Abrasion 0.637→0.656, Filling
 0.269→0.284, Crown 0.636→0.648); no class regressed meaningfully.
 
-**Leaderboard.** `0.31189` vs single V6 `0.27047` → **+0.0414**, the first submission to beat
-single-model V6. The LB gain is ~5× the comparable-val-metric delta (+0.008) — **the local metric
-under-predicted the real gain.** Treat the val metric as a conservative directional signal, not an
-absolute.
+**Leaderboard (7.1, hflip-only).** `0.31189` vs single V6 `0.27047` → **+0.0414**, the first
+submission to beat single-model V6. The LB gain is ~5× the comparable-val-metric delta (+0.008) —
+**the local metric under-predicted the real gain.** Treat the val metric as a conservative
+directional signal, not an absolute.
 
-**Status.** This is the **production submission**, with **zero additional training**. `src/09` is the
-val gain check; `src/10` is the submission builder (auto-detects V6/V10 + the competition test set,
-tunes the conf floor on val, writes `submission.csv` in the `id,patient_id,class_id,confidence,poly`
-format). Cheap follow-ups that did not get spent yet: lower `ENS_NMS_IOU`, extra TTA views
-(vflip/multi-scale), confidence-weighting the two models, or a larger backbone (yolov8m/l-seg @768).
+### 7.2. Multi-view TTA follow-up — `+vflip+mscale` (LB 0.31753, current production)
+
+With the hflip-only ensemble already the production config, `src/09` §7b sweeps the cheap,
+zero-training knobs, **each a single-variable change** vs the hflip-only `Ensemble+TTA` baseline
+(val 0.2134): merge `ENS_NMS_IOU` ∈ {0.50, 0.55, 0.60}, **+vflip** view, **+multi-scale** (extra
+imgsz 640/896), and **per-model confidence weighting**. Scored on the same comparable Mask mAP; the
+`large` column = mean AP over Abrasion/Crown/Filling. Gate: win iff val > +0.003 over baseline AND
+large does not regress.
+
+| Follow-up (vs hflip-only Ensemble+TTA = 0.2134) | val mAP | vs base | large |
+|---|---:|---:|---:|
+| NMS-IoU 0.50 / 0.55 | 0.2129 / 0.2131 | −0.0006 / −0.0003 | 0.529 |
+| + vflip (alone) | 0.2123 | −0.0011 | 0.531 |
+| + multi-scale (alone) | 0.2161 | +0.0026 | 0.524 |
+| **+ vflip + multi-scale** | **0.2173** | **+0.0038** | **0.530** |
+| conf-weight wV10·0.8 / wV6·0.8 | 0.2113 / 0.2113 | −0.0021 / −0.0022 | 0.524 / 0.528 |
+
+**Only `+vflip+mscale` cleared the gate** (+0.0038, large held at 0.530). Note the interaction:
+multi-scale is the workhorse (+0.0026 alone), vflip *alone* is slightly negative (−0.0011) but adds
+useful diversity in combination; NMS-IoU and conf-weighting were noise or negative. Wired into
+`src/10` (`ADD_VFLIP=True`, `EXTRA_SCALES=[640,896]` → views = orig + hflip + vflip + 640 + 896 = 10
+forward passes/image, ~2.5× the hflip-only cost).
+
+**Leaderboard (7.2).** `0.31753` vs hflip-only `0.31189` → **+0.0056**, a small but real confirmed
+gain. Again the val delta (+0.0038) **under-predicted** the LB (+0.0056, ~1.5×) — consistent with
+7.1's pattern that the local metric is conservative. The +0.0038 was a max-of-8 selection on 83 val
+images (selection noise), so the LB confirmation is what makes it production, not the val number.
+
+**Status.** `+vflip+mscale` is the **production submission** (LB 0.31753), **zero additional
+training**. `src/09` holds the §1–8 base attribution, the §7b follow-up sweep, and the §7.3 3-model
+check; `src/10` is the submission builder (auto-detects V6/V10/V9 + the competition test set, tunes the
+conf floor on val, writes `submission.csv`; set `ADD_VFLIP=False`/`EXTRA_SCALES=[]` to revert to
+hflip-only, omit V9 to revert to 2-model).
+
+### 7.3. 3-model ensemble (add V9 = yolov8m) — tested, NO aggregate help (ensemble line exhausted)
+
+A larger *single* model was already a dead end (V9 = yolov8m-seg @768 → 0.232 ≈ V6, see §V9). So V9 was
+tried **only as a more architecturally-diverse 3rd ensemble member** (zero training): the ensemble gain
+is a *diversity* mechanism, not a capacity one. `src/09` was wired to auto-detect V9 and add `Ens3`
+variants; `src/10`'s `ensemble_predict` loops every loaded model, so attaching V9 makes it 3-model
+(15 forward passes/image with the full TTA stack).
+
+| Variant (val, vs 2-model Ensemble+TTA 0.2134) | mAP | vs base | large |
+|---|---:|---:|---:|
+| 2-model `+vflip+mscale` (production) | 0.2173 | +0.0038 | 0.530 |
+| 3-model `Ens3+TTA` (hflip) | 0.2168 | +0.0033 | **0.540** |
+| 3-model `Ens3 +vflip+mscale` | 0.2154 | +0.0020 | 0.536 |
+
+**3-model vs 2-model (both `+vflip+mscale`) = −0.0019 → within noise, no help.** Decisive nuance: V9
+**measurably lifts the large classes** (large 0.529→0.540, +0.011 at hflip — yolov8m's capacity helps
+where the boxes are already good) but **drags the small Caries down** (lower small-object recall), and
+large is only 3/9 of the per-class-averaged mAP, so the two cancel and the net is slightly negative.
+This is the **same mAP-weight story** (V9's strength lands on the near-saturated, low-marginal large
+classes) and shows the **ensemble/diversity lever is exhausted** — even a distinct yolov8m can't move
+aggregate. **Decision: keep the 2-model `+vflip+mscale` (LB 0.31753); do not submit 3-model / attach V9.**
+Rejected as not worth it: class-routing (3-model for large, 2-model for Caries) or down-weighting V9
+(conf-weighting already lost on val in §7.2). **Productive next direction is OFF the ensemble/capacity
+axis** — a small-class **semantic-segmentation hybrid** that bypasses the box entirely (the only lever
+that escapes the box-quality wall; run an oracle upper-bound first), or accept the plateau.

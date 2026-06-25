@@ -11,8 +11,9 @@
 > rescues the small Caries), but real V6 Caries boxes are too loose for SAM. See the Phase 0 Result
 > section below. Decision pending: optional decoder-only fine-tune (helps the domain gap, not the
 > box gap) vs close the line and pivot to all-class levers (TTA / V6+V10 ensemble / larger backbone).
-> **Update:** the all-class pivot won — V6+V10 ensemble + hflip TTA reached **public LB 0.31189** (vs
-> single V6 0.27047). See README §"V6+V10 ensemble" and the EN/CN logs §7.
+> **Update:** the all-class pivot won — V6+V10 ensemble + multi-view TTA (hflip+vflip+multi-scale 640/896)
+> reached **public LB 0.31753** (vs hflip-only 0.31189, vs single V6 0.27047). See README §"V6+V10
+> ensemble" and the EN/CN logs §7.
 >
 > **File note (2026-06-24 cleanup):** helper files cited below were removed when the related lines
 > closed — `tools/tile_yolo_seg.py` (the `untile_polygon` placement discipline) and the `stage2/`
