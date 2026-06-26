@@ -1039,3 +1039,70 @@ vflip *单独* 略负（−0.0011）但组合里补了多样性；NMS-IoU 与加
 按类路由（大类用 3 模型、Caries 用 2 模型）、给 V9 降权（加权在 §7.2 已经 val 上失败）。**真正的下一步在
 ensemble/容量轴之外** —— 只针对小类、**绕过框**的语义分割 hybrid（唯一逃离框质量墙的杠杆;先跑 oracle 上界）,
 或接受 plateau。
+---
+
+## 8. 小类分割 hybrid —— 脱离框轴（V16 失败,路线 B 已搭建）
+
+在 ensemble/多样性杠杆榨干（§7.3）之后,下一条方向彻底离开了画框范式:对**小类（caries）做逐像素分割**,
+**大类仍用 V6**（hybrid,这样承载按类平均 mAP、已近饱和的大类不被打扰）。指标是按子类的**实例** Mask
+mAP50-95,用与 src/03/04/09 相同的可比 matcher 打分,所以下面每个数字都是真实 delta,不是指标假象。
+
+### 8.1. V16:无框语义分割 hybrid（`src/11`）—— 已跑 & 失败（no-go）
+
+**配置。** `U-Net(resnet18, imagenet)` 在固定 **512×1024** 上做多类逐像素预测 {背景, caries…};CE +
+`BG_WEIGHT=0.2` 对抗极端不平衡;按 val 前景 mIoU 存 checkpoint。实例由**逐像素 argmax → 连通域**抽取,
+一个连通域一个实例（多边形 = 最大轮廓,**置信度 = 连通域上的平均类概率**）。大类路由给 V6。结果表为
+`results/version16_results.csv`（eval-only 的每类 AP，与 V14 同型,不是逐 epoch 曲线）。
+
+**结果 —— 每个有支撑的小类都比 V6 差。**
+
+| 有支撑小类 | semseg（src/11） | V6 参考 |
+|---|---:|---:|
+| Caries 1 | 0.055 | 0.120 |
+| Caries 2 | 0.020 | 0.085 |
+| Caries 3 | 0.005 | 0.012 |
+| Caries 5 | 0.047 | 0.110 |
+| **均值（headline）** | **0.032** | **0.081** |
+
+Hybrid 聚合（9 类）= **0.1855 vs V6 0.2099（−0.024）** —— 把小类路由到更弱的 semseg 分支反而把聚合拖
+*低*;大类（Abrasion/Crown/Filling）因为走 V6 基本不变。按预注册 headline,**明确 no-go**。
+
+**诊断 —— 两个独立缺陷相乘。**（1）512×1024 固定 resize 让微小 caries 没有足够像素（分辨率混淆变量）。
+（2）语义图→实例的转换在结构上就弱,与像素质量无关:**连通域把"空间相连"当成"同一物体"**（相邻同类
+caries 合成一个实例 → 掉 recall;mask 碎裂成两块 → 多一个假阳实例 → 掉 precision）,**平均类概率不是会
+排序的分数**（mAP 按置信度排序,排错/"自信的噪声块"分数直接让 AP 崩,即使像素对了）,而且**多类 argmax
+让子类逐像素竞争**（边界像素翻类 → 错类实例）。切片/提分辨率只能修缺陷（1）。这就是为什么这条路连 V6 的
+*松框*检测器都打不过:脱离框是必要但不充分 —— 实例化与打分必须**学**出来,不能临时拼。
+
+### 8.2. 路线 B:无框 center+offset 实例分割（`src/12`）—— 已搭建,未运行
+
+修缺陷（2）:把两个临时拼凑件 —— 连通域实例 + 平均概率置信度 —— 换成**学习式**机器,同时其余一切与
+src/11 完全一致,使 headline delta 成为干净的单变量信号。
+
+**它是什么（Panoptic-DeepLab 式）。** 一个 `U-Net(resnet18)` 输出 **`N_SEM + 3`** 通道:`N_SEM` 语义
+logits、**1 center heatmap**、**2 offset-to-center**。解码:对 center heatmap 做 max-pool NMS → 实例
+中心（**分数 = 峰值**,即学出来的置信度）;每个前景像素投票 `(x+dx, y+dy)` 分给**最近的中心** → 实例
+像素组（这能切开粘连的同类病灶,连通域做不到）;实例类别 = 语义多数投票;多边形 = 最大轮廓。损失 =
+加权 CE（语义,`BG_WEIGHT=0.2`）+ **CenterNet penalty-reduced focal**（center）+ **masked L1**（offset）。
+目标从 GT 多边形按实例构造（栅格化 → 质心 → 高斯 splat + offset 场）;hflip 先作用在**多边形**上,保证
+所有目标一致。
+
+**与 src/11 保持一致（单变量）:** 多类语义头、固定 512×1024、`BG_WEIGHT=0.2`、可比 Mask mAP、LARGE→V6
+路由。**唯一改动 = 实例抽取 + 打分。**
+
+**搭建时做的抉择**（已向用户说明）:分组 = center+offset（现有 U-Net 的纯 PyTorch 扩展,分数现成;切不开
+时退回 StarDist）;center 损失 = CenterNet focal,不是朴素 MSE（稀疏热力图 → MSE 塌成 0）;checkpoint 仍
+按 **val fg-mIoU**（语义代理,为干净对照 —— 它不反映实例质量,若结果在边界上,正解是换 center-detection
+AP 代理;用户已确认本次保留 fg-mIoU）。留作后续各自单变量实验:二值 caries-vs-bg + 子类头、提分辨率/切片、
+Dice/Focal 语义损失。
+
+**预注册读法。** notebook 的 §8 直接打印 `inst − semseg(src11)` 和 `inst − V6`。
+- **Go**:`inst` 在有支撑小类上同时超过 src/11（0.032）和 V6（0.081）超过 ~0.003 → 分组+打分就是瓶颈 →
+  精修（二值+子类、提分辨率/切片、center-AP checkpoint、TTA）并搭提交路径。
+- **Partial**:超过 src/11 但不到 V6 → 机制有效（诊断对了）但像素信号（分辨率）仍封顶 → 下一个单变量杠杆
+  是分辨率/切片。
+- **No-go**:与 src/11 持平 → 实例/打分机制不是瓶颈 → 去攻分辨率,或收手,保持 2 模型 ensemble（LB
+  0.31753）为生产。
+
+设计文档:`docs/instance_seg_small_hybrid_notes.md`。产物:`instance_seg_hybrid_baseline.csv`（存为
+`results/version17_results.csv`）+ `instance_seg_small_baseline.pt`。**等待 Kaggle 运行。**

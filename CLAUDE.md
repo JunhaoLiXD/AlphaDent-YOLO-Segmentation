@@ -48,6 +48,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/08-yolo-seg-nwd-training.ipynb` — **V15 (TRAINED, default λ=0.5/C=5.0 UNDERWHELMED)**: `yolov8s-seg` + **NWD-blended box regression loss** (`box_loss = λ·(1−CIoU) + (1−λ)·(1−NWD)`) to tighten loose tiny boxes — the wall both closed lines hit. New **training** notebook (does NOT rewire `src/01`); single variable vs V6 (full-image, imgsz=768, clean aug). Monkey-patches `BboxLoss.forward` (uses `*extra` to survive the ≥8.3 `imgsz,stride` signature). Knobs `NWD_IOU_RATIO`/`NWD_CONSTANT` in §6. Saves `results/version15_results.csv`. Design: `docs/small_object_box_quality_notes.md`. **Result: best ≈0.24 (spiky, sustained ~0.228 = at the plateau); the `src/05` leading indicator (recall@IoU0.5) REGRESSED on all supported Caries (mean −0.035) + large classes → NWD-default failed; line on hold (C-sweep / size-gate untried).**
 - `src/09-ensemble-tta-eval.ipynb` — **V6+V10 ensemble + manual TTA, val gain check (eval-only).** Full-image; each model on image+augmented views (mirrored back), pooled + class-wise NMS (IoU 0.6); scored with the src/03/04/05 comparable Mask mAP. §1–8: 6-variant attribution, headline `Ensemble+TTA` (hflip) 0.2134 vs V6 0.2053 (+0.0082). **§7b: cheap follow-up knob sweep** vs that baseline — NMS-IoU {0.50,0.55,0.60}, +vflip, +multi-scale(640/896), per-model conf-weighting; **only `+vflip+mscale` won (0.2173, +0.0038, large held 0.530)**; vflip-alone −0.0011, conf-weighting/NMS-IoU noise. §7b also runs the **3-model check** (add V9=yolov8m): `Ens3 +vflip+mscale` = 0.2154 = **−0.0019 vs 2-model → no aggregate help** (V9 lifts large 0.529→0.540 but drags Caries). Ultralytics `augment=True` is a **no-op for seg** → TTA is manual. Auto-detects `version6`/`version10`/`version9` weights (V9 optional → graceful 2-model).
 - `src/10-ensemble-tta-submission.ipynb` — **THE PRODUCTION SUBMISSION.** Same ensemble pipeline with the §7b-winning **multi-view TTA (orig+hflip+vflip+640+896 = 10 fwd passes/img)** on the test set → `submission.csv` (`id,patient_id,class_id,confidence,poly`). Knobs `ADD_VFLIP`/`EXTRA_SCALES` (set off → revert to hflip-only). **Confidence floor tuned on val** (sweep the comparable Mask mAP, keep the highest floor within 0.003 of best). **Public LB 0.31753** vs hflip-only 0.31189 (**+0.0056**) vs single V6 0.27047 (**+0.0471**). Auto-detects V9 too and runs a 3-model ensemble if attached (15 fwd passes/img) — but the §7b check found V9 gives no aggregate gain, so **production omits V9 (2-model)**. Inputs: competition dataset + V6/V10 (+ optional V9) + the training `yolo_seg_train.yaml` (for the floor sweep). `ALLOW_INTERNET_INSTALL=True` (this comp allows net).
+- `src/11-semseg-small-hybrid-baseline.ipynb` — **V16, RUN & FAILED: small-class semantic segmentation + YOLO-large hybrid.** The first attempt on a non-box axis after the ensemble lever was exhausted. **SMALL (caries) classes → `U-Net(resnet18, imagenet)` multiclass per-pixel** (fixed 512×1024 resize, CE with `BG_WEIGHT=0.2`, checkpoint by val fg-mIoU); per-pixel argmax → connected components → instances (polygon + mean-prob confidence). **LARGE (Abrasion/Crown/Filling) → V6** (unchanged). Scored with the src/03/04/09 comparable Mask mAP. **Headline = supported-small (caries1/2/3/5) semseg AP vs V6 small AP**. **Result (`results/version16_results.csv`): supported-small semseg 0.032 vs V6 0.081 (≈−60%), hybrid agg 0.1855 vs V6 0.2099 → NO-GO.** Failure = two deficits multiply: low resolution + weak semseg→instance conversion (connected-components conflate instances, mean-prob isn't a ranking score, argmax subtype competition). Inputs: training dataset + V6. Design: `docs/semseg_small_hybrid_notes.md`.
+- `src/12-instance-seg-small-hybrid-baseline.ipynb` — **ROUTE B, baseline BUILT (not yet run): boxless center+offset INSTANCE segmentation for small caries.** Direct successor to src/11 — fixes its two instance/score holes with **learned** machinery, **single-variable** (everything else identical to src/11: multiclass semantic head, 512×1024, BG_WEIGHT=0.2, LARGE→V6, comparable metric). One `U-Net(resnet18)` outputs **`N_SEM+3`** channels = semantic + **center heatmap** + **offset-to-center** (Panoptic-DeepLab); decode = max-pool-NMS peaks → offset-voting assignment (splits touching same-class lesions) → instance class by majority vote, **confidence = center peak value** (learned score). Losses: weighted CE + **CenterNet penalty-reduced focal** (center) + masked **L1** (offset). **Headline = supported-small inst AP vs BOTH src/11 (0.032) and V6 (0.081)** — §8 prints both deltas. Decisions flagged: grouping = center+offset (StarDist is fallback); center loss = focal not MSE; **checkpoint still val fg-mIoU (semantic proxy — open limitation, center-AP proxy is the upgrade)**; binary+subtype/higher-res/Dice deferred as separate single-variable runs. Inputs: training dataset + V6. Design: `docs/instance_seg_small_hybrid_notes.md`. Saves `instance_seg_hybrid_baseline.csv` + `instance_seg_small_baseline.pt`.
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
 - `tools/make_clahe_yolo_dataset.py` (1B, CLAHE dataset build), `tools/sweep_yolo_conf.py` (1D, submission threshold).
 - **Removed in the 2026-06-24 cleanup (dead-line files; experiments still documented in the log):**
@@ -94,6 +96,8 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - Use `docs/small_object_research_notes.md` for the two-stage detect-then-refine plan (YOLO Stage 1 → high-res ROI → trained Stage 2) — now **CLOSED/NO-GO** after Phase 1c (kept as a record).
 - Use `docs/medsam_refine_research_notes.md` for the MedSAM mask-refinement plan (keep V6 boxes/class/score, swap the coarse YOLO mask for a MedSAM mask to lift large-class IoU) — Phase 0 **RUN, NO-GO** (failure = box quality, not mask quality).
 - Use `docs/small_object_box_quality_notes.md` for the **box-quality / NWD** plan (V15): fix loose tiny boxes at the loss with an NWD-blended box regression loss — the lever both closed lines pointed to. Implemented in `src/08`, built/not-yet-trained.
+- Use `docs/semseg_small_hybrid_notes.md` for the **small-class semantic-segmentation hybrid** (the post-ensemble new line): SMALL caries via boxless per-pixel U-Net, LARGE classes via V6. Implemented in `src/11` = **V16, RUN & FAILED** (supported-small AP 0.032 vs V6 0.081; failure = low resolution + a weak semseg→instance conversion).
+- Use `docs/instance_seg_small_hybrid_notes.md` for **route B** (the src/11 successor): boxless **center+offset INSTANCE** segmentation that replaces the weak semseg→instance conversion (connected-components + mean-prob) with a learned center heatmap + offset head. Implemented in `src/12`, built/not-yet-run. Single-variable vs src/11 (only the instance extraction + score change).
 
 ## Reminders
 
@@ -553,3 +557,66 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   next direction is OFF the ensemble/capacity axis:** the user's small-class **semantic-segmentation
   hybrid** (bypasses the box entirely — the only lever that escapes the box-quality wall; run an oracle
   upper-bound first), or accept the plateau. Docs updated: README + EN/CN §7 + this entry + project memory.
+
+### 2026-06-25 — New line opened: small-class semantic-segmentation hybrid (`src/11` BUILT, not run)
+- **Decision (with user)**: after the ensemble lever was exhausted, the user committed to their original
+  idea — **boxless semantic segmentation for the SMALL (caries) classes, keep YOLO for the LARGE
+  classes.** Rationale: it is the one approach that structurally escapes the box-quality wall (it never
+  goes through a box), and it targets the small classes without disturbing the near-saturated large ones.
+  User asked for "a basic baseline, the way I think is most appropriate" → built a full, runnable,
+  comparable-metric hybrid baseline (not just an oracle).
+- **`src/11-semseg-small-hybrid-baseline.ipynb` BUILT** (20 cells, 10 code, all compile; Kaggle
+  self-contained; built via one-off `tools/_build_src11.py`, deleted). SMALL → `U-Net(resnet18,
+  imagenet)` multiclass per-pixel (fixed 512×1024 resize — normalized polys are resize-invariant; CE with
+  `BG_WEIGHT=0.2`; checkpoint by val fg-mIoU); per-pixel argmax → connected components → instances
+  (polygon + mean-prob confidence). LARGE → V6 (large classes only). Scored with the src/03/04/09
+  comparable Mask mAP. **Metric subtlety baked in**: the competition is *instance*-seg mAP, so semseg
+  needs the components→instances+confidence conversion (a new error source — noted).
+- **Pre-registered reading**: headline = supported-small (caries 1/2/3/5; 4/6 are noise) semseg AP vs
+  V6's small AP (does boxless seg beat the loose-box detector on small classes, beyond ~0.003?);
+  secondary = hybrid aggregate (9 cls) vs V6 0.2099 (conservative — small classes are low-weight). Go →
+  refine (higher res, Dice/focal, better instance split, semseg TTA) + submission path; no-go (flat even
+  as baseline) → small-class headroom genuinely capped, keep the 2-model ensemble (LB 0.31753).
+- **Inputs**: training dataset (`yolo_seg_train.yaml`, train+val images **and** labels) + V6. Saves
+  `semseg_hybrid_baseline.csv` + `semseg_small_baseline.pt`. New research note
+  `docs/semseg_small_hybrid_notes.md`; README structure + CLAUDE notebooks/docs-rules + project memory
+  updated. **Awaiting the Kaggle run.**
+
+### 2026-06-26 — V16 (src/11 semseg) RAN & FAILED; route B (`src/12` boxless instance seg) BUILT
+- **V16 result** (`results/version16_results.csv`, user's naming; eval-only per-class table): **NO-GO.**
+  Supported-small (caries 1/2/3/5) semseg AP = 0.055/0.020/0.005/0.047 vs V6 0.120/0.085/0.012/0.110 →
+  **every supported class worse, mean 0.032 vs 0.081 (≈−60%)**; hybrid aggregate **0.1855 vs V6 0.2099
+  (−0.024)** (small→semseg drags the aggregate; large still route to V6). Pre-registered headline failed.
+- **Diagnosis (with user): two independent deficits multiply** — (1) the 512×1024 fixed resize starves
+  tiny caries of pixels (resolution confounder), and (2) the semseg→instance conversion is structurally
+  weak: connected components conflate connectivity with object identity (touching caries merge / fragments
+  split), mean-prob is not a ranking score (mAP is sort-dominated), multiclass argmax makes subtypes
+  compete per-pixel. Tiling/higher-res only fixes (1).
+- **Direction (with user): route B = proper boxless INSTANCE segmentation** — fix the two conversion holes
+  with learned machinery. Discussed the broader menu off the YOLO-box paradigm (query-based Mask2Former/
+  MaskDINO; boxless instance seg w/ learned grouping+score; point-prompted/auto SAM; heatmap lesion
+  detection) and the standing mAP-weight caveat (perfect small-class localization moves the aggregate only
+  modestly). User chose route B for a simple baseline.
+- **`src/12-instance-seg-small-hybrid-baseline.ipynb` BUILT** (20 cells, 10 code, all compile; Kaggle
+  self-contained; built via one-off `tools/_build_src12.py`, deleted). **Single-variable vs src/11: the
+  ONLY change is instance extraction + score.** One `U-Net(resnet18)` → `N_SEM+3` channels (semantic +
+  center heatmap + offset-to-center, Panoptic-DeepLab). Decode: max-pool-NMS center peaks → every fg pixel
+  votes `(x+dx,y+dy)` → nearest-center assignment (splits touching same-class lesions) → class by majority
+  semantic vote, **confidence = center peak (learned score)**. Losses: weighted CE + CenterNet
+  penalty-reduced focal (center) + masked L1 (offset). Targets built per-instance from GT polys
+  (rasterize→centroid→gaussian+offset); hflip on polys first (no offset-sign bookkeeping). LARGE→V6
+  unchanged; same comparable Mask mAP; §8 prints `inst − semseg(src11)` and `inst − V6`.
+- **Decisions I made & flagged**: grouping = center+offset (pure-PyTorch, learned score free; StarDist is
+  the fallback if it under-splits); center loss = CenterNet focal not MSE (sparse heatmap); deferred to
+  later single-variable runs = binary caries-vs-bg + subtype head, higher-res/tiling, Dice/Focal. **OPEN
+  decision raised with the user**: checkpoint metric is still **val fg-mIoU** (semantic proxy, kept for a
+  clean comparison) — it does NOT measure instance quality; a center-detection AP proxy is the upgrade if
+  the result lands borderline.
+- **Pre-registered reading**: Go = `inst` beats BOTH src/11 (0.032) and V6 (0.081) on supported-small
+  beyond ~0.003 → the grouping+score fix was the bottleneck, refine + submission path; Partial = beats
+  src/11 not V6 → machinery helped, pixel signal (resolution) caps → next lever resolution/tiling; No-go =
+  flat vs src/11 → machinery wasn't the issue → resolution, or stop and keep the 2-model ensemble (LB
+  0.31753). Inputs: training dataset + V6. Saves `instance_seg_hybrid_baseline.csv` +
+  `instance_seg_small_baseline.pt` (save the CSV as `results/version17_results.csv`). New research note
+  `docs/instance_seg_small_hybrid_notes.md`; README structure + CLAUDE notebooks list + project memory
+  updated. **Awaiting the Kaggle run.**

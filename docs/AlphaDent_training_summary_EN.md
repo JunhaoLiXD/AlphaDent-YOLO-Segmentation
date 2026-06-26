@@ -1117,3 +1117,87 @@ Rejected as not worth it: class-routing (3-model for large, 2-model for Caries) 
 (conf-weighting already lost on val in §7.2). **Productive next direction is OFF the ensemble/capacity
 axis** — a small-class **semantic-segmentation hybrid** that bypasses the box entirely (the only lever
 that escapes the box-quality wall; run an oracle upper-bound first), or accept the plateau.
+---
+
+## 8. Small-class segmentation hybrid — off the box axis (V16 failed, route B built)
+
+After the ensemble/diversity lever was exhausted (§7.3), the next direction left the box paradigm
+entirely: segment the **small (caries) classes** at the pixel level and keep **V6 for the large
+classes** (a hybrid, so the near-saturated large classes that carry the per-class-averaged mAP are
+never disturbed). The metric is per-subtype **instance** Mask mAP50-95, scored with the same
+comparable matcher as src/03/04/09 so every number below is a true delta, not a metric artifact.
+
+### 8.1. V16: boxless semantic-segmentation hybrid (`src/11`) — RUN & FAILED (no-go)
+
+**Configuration.** `U-Net(resnet18, imagenet)` does multiclass per-pixel prediction over
+{background, caries…} at a fixed **512×1024** resize; CE with `BG_WEIGHT=0.2` for the severe
+imbalance; checkpoint by val foreground mIoU. Instances are extracted by **per-pixel argmax →
+connected components**, one instance per component (polygon = largest contour, **confidence = mean
+class probability** over the component). Large classes routed to V6. Result table is
+`results/version16_results.csv` (eval-only, per-class AP — like V14, not a per-epoch curve).
+
+**Result — every supported small class is worse than V6.**
+
+| supported small | semseg (src/11) | V6 ref |
+|---|---:|---:|
+| Caries 1 | 0.055 | 0.120 |
+| Caries 2 | 0.020 | 0.085 |
+| Caries 3 | 0.005 | 0.012 |
+| Caries 5 | 0.047 | 0.110 |
+| **mean (headline)** | **0.032** | **0.081** |
+
+Hybrid aggregate (9 classes) = **0.1855 vs V6 0.2099 (−0.024)** — routing the small classes to the
+weaker semseg branch drags the aggregate *down*; the large classes (Abrasion/Crown/Filling) stay
+≈unchanged because they go to V6. **Clear no-go** on the pre-registered headline.
+
+**Diagnosis — two independent deficits multiply.** (1) The 512×1024 fixed resize starves tiny caries
+of pixels (a resolution confounder). (2) The semantic-map → instance conversion is structurally weak,
+independent of pixel quality: **connected components conflate spatial connectivity with object
+identity** (touching same-class caries merge into one instance → recall loss; a fragmented mask splits
+into two → a false-positive instance → precision loss), **mean class probability is not a ranking
+score** (mAP sorts all predictions by confidence, so a mis-ordered/“confident noise blob” score
+craters AP even when the pixels are fine), and **multiclass argmax makes the subtypes compete
+per-pixel** (a borderline pixel flips class → wrong-class instance). Tiling / higher resolution only
+fixes deficit (1). This is why the route did not even beat V6's *loose-box* detector: escaping the box
+is necessary but not sufficient — the instance/score machinery has to be learned, not improvised.
+
+### 8.2. Route B: boxless center+offset INSTANCE segmentation (`src/12`) — BUILT, not yet run
+
+The fix for §8.1's deficit (2): replace the two improvised pieces — connected-components instances and
+mean-prob confidence — with **learned** machinery, while holding everything else identical to src/11
+so the headline delta is a clean single-variable signal.
+
+**What it is (Panoptic-DeepLab style).** One `U-Net(resnet18)` outputs **`N_SEM + 3`** channels:
+`N_SEM` semantic logits, **1 center heatmap**, **2 offset-to-center**. At decode: max-pool-NMS the
+center heatmap → instance centers (**score = peak value**, the learned confidence); every foreground
+pixel votes `(x+dx, y+dy)` and is assigned to the **nearest center** → instance pixel groups (this
+splits touching same-class lesions, which connected components could not); instance class = majority
+semantic vote; polygon = largest contour. Losses: weighted CE (semantic, `BG_WEIGHT=0.2`) +
+**CenterNet penalty-reduced focal** (center heatmap) + **masked L1** (offset). Targets are built
+per-instance from the GT polygons (rasterize → centroid → gaussian splat + offset field); hflip is
+applied to the **polygons first** so all targets stay consistent.
+
+**Held identical to src/11 (single variable):** multiclass semantic head, fixed 512×1024 resize,
+`BG_WEIGHT=0.2`, the comparable Mask mAP, and the LARGE→V6 routing. **The only change is the instance
+extraction + the score.**
+
+**Decisions made at build time** (flagged to the user): grouping = center+offset (pure-PyTorch
+extension of the existing U-Net, learned score for free; StarDist is the fallback if it under-splits);
+center loss = CenterNet focal, not plain MSE (the heatmap is sparse → MSE collapses to zero);
+checkpoint kept at **val fg-mIoU** (semantic proxy, for a clean comparison — it does *not* measure
+instance quality, so a center-detection AP proxy is the upgrade if the result is borderline; user
+confirmed keeping fg-mIoU for this run). Deferred to later single-variable runs: binary caries-vs-bg +
+subtype head, higher resolution / tiling, Dice/Focal semantic loss.
+
+**Pre-registered reading.** §8 of the notebook prints `inst − semseg(src11)` and `inst − V6` directly.
+- **Go**: `inst` beats *both* src/11 (0.032) and V6 (0.081) on supported-small beyond ~0.003 → the
+  grouping+score machinery was the bottleneck → refine (binary+subtype, higher res/tiling, center-AP
+  checkpoint, TTA) and build a submission path.
+- **Partial**: beats src/11 but not V6 → the machinery helped (the diagnosis was right) but the pixel
+  signal (resolution) still caps it → next single-variable lever is resolution / tiling.
+- **No-go**: flat vs src/11 → the instance/score machinery was not the bottleneck → resolution, or stop
+  and keep the 2-model ensemble (LB 0.31753) as production.
+
+Design note: `docs/instance_seg_small_hybrid_notes.md`. Outputs: `instance_seg_hybrid_baseline.csv`
+(save as `results/version17_results.csv`) + `instance_seg_small_baseline.pt`. **Awaiting the Kaggle
+run.**
