@@ -49,7 +49,7 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - `src/09-ensemble-tta-eval.ipynb` — **V6+V10 ensemble + manual TTA, val gain check (eval-only).** Full-image; each model on image+augmented views (mirrored back), pooled + class-wise NMS (IoU 0.6); scored with the src/03/04/05 comparable Mask mAP. §1–8: 6-variant attribution, headline `Ensemble+TTA` (hflip) 0.2134 vs V6 0.2053 (+0.0082). **§7b: cheap follow-up knob sweep** vs that baseline — NMS-IoU {0.50,0.55,0.60}, +vflip, +multi-scale(640/896), per-model conf-weighting; **only `+vflip+mscale` won (0.2173, +0.0038, large held 0.530)**; vflip-alone −0.0011, conf-weighting/NMS-IoU noise. §7b also runs the **3-model check** (add V9=yolov8m): `Ens3 +vflip+mscale` = 0.2154 = **−0.0019 vs 2-model → no aggregate help** (V9 lifts large 0.529→0.540 but drags Caries). Ultralytics `augment=True` is a **no-op for seg** → TTA is manual. Auto-detects `version6`/`version10`/`version9` weights (V9 optional → graceful 2-model).
 - `src/10-ensemble-tta-submission.ipynb` — **THE PRODUCTION SUBMISSION.** Same ensemble pipeline with the §7b-winning **multi-view TTA (orig+hflip+vflip+640+896 = 10 fwd passes/img)** on the test set → `submission.csv` (`id,patient_id,class_id,confidence,poly`). Knobs `ADD_VFLIP`/`EXTRA_SCALES` (set off → revert to hflip-only). **Confidence floor tuned on val** (sweep the comparable Mask mAP, keep the highest floor within 0.003 of best). **Public LB 0.31753** vs hflip-only 0.31189 (**+0.0056**) vs single V6 0.27047 (**+0.0471**). Auto-detects V9 too and runs a 3-model ensemble if attached (15 fwd passes/img) — but the §7b check found V9 gives no aggregate gain, so **production omits V9 (2-model)**. Inputs: competition dataset + V6/V10 (+ optional V9) + the training `yolo_seg_train.yaml` (for the floor sweep). `ALLOW_INTERNET_INSTALL=True` (this comp allows net).
 - `src/11-semseg-small-hybrid-baseline.ipynb` — **V16, RUN & FAILED: small-class semantic segmentation + YOLO-large hybrid.** The first attempt on a non-box axis after the ensemble lever was exhausted. **SMALL (caries) classes → `U-Net(resnet18, imagenet)` multiclass per-pixel** (fixed 512×1024 resize, CE with `BG_WEIGHT=0.2`, checkpoint by val fg-mIoU); per-pixel argmax → connected components → instances (polygon + mean-prob confidence). **LARGE (Abrasion/Crown/Filling) → V6** (unchanged). Scored with the src/03/04/09 comparable Mask mAP. **Headline = supported-small (caries1/2/3/5) semseg AP vs V6 small AP**. **Result (`results/version16_results.csv`): supported-small semseg 0.032 vs V6 0.081 (≈−60%), hybrid agg 0.1855 vs V6 0.2099 → NO-GO.** Failure = two deficits multiply: low resolution + weak semseg→instance conversion (connected-components conflate instances, mean-prob isn't a ranking score, argmax subtype competition). Inputs: training dataset + V6. Design: `docs/semseg_small_hybrid_notes.md`.
-- `src/12-instance-seg-small-hybrid-baseline.ipynb` — **ROUTE B, baseline BUILT (not yet run): boxless center+offset INSTANCE segmentation for small caries.** Direct successor to src/11 — fixes its two instance/score holes with **learned** machinery, **single-variable** (everything else identical to src/11: multiclass semantic head, 512×1024, BG_WEIGHT=0.2, LARGE→V6, comparable metric). One `U-Net(resnet18)` outputs **`N_SEM+3`** channels = semantic + **center heatmap** + **offset-to-center** (Panoptic-DeepLab); decode = max-pool-NMS peaks → offset-voting assignment (splits touching same-class lesions) → instance class by majority vote, **confidence = center peak value** (learned score). Losses: weighted CE + **CenterNet penalty-reduced focal** (center) + masked **L1** (offset). **Headline = supported-small inst AP vs BOTH src/11 (0.032) and V6 (0.081)** — §8 prints both deltas. Decisions flagged: grouping = center+offset (StarDist is fallback); center loss = focal not MSE; **checkpoint still val fg-mIoU (semantic proxy — open limitation, center-AP proxy is the upgrade)**; binary+subtype/higher-res/Dice deferred as separate single-variable runs. Inputs: training dataset + V6. Design: `docs/instance_seg_small_hybrid_notes.md`. Saves `instance_seg_hybrid_baseline.csv` + `instance_seg_small_baseline.pt`.
+- `src/12-instance-seg-small-hybrid-baseline.ipynb` — **ROUTE B: boxless center+offset INSTANCE segmentation for small caries. V17 RAN & FAILED → NO-GO, line CLOSED 2026-06-30.** V1 was all-0 from a decode/checkpoint bug; the v17 FIX made the re-run *fair* — the instance machinery is validated (center-recall 0.82, 526 instances, only 1/83 images with 0 peaks) but every supported-small `inst_small_AP=0.000` and hybrid agg ≈0.171 because the semantic mask quality (val fg-mIoU ≈0.02) is far too low to clear mask-IoU≥0.5. **The grouping+score machinery was NOT the bottleneck; the pixel signal (resolution) is** — same wall as src/11. 2-model ensemble (LB 0.31753) stays production. Direct successor to src/11 — fixes its two instance/score holes with **learned** machinery, **single-variable** (everything else identical to src/11: multiclass semantic head, 512×1024, BG_WEIGHT=0.2, LARGE→V6, comparable metric). One `U-Net(resnet18)` outputs **`N_SEM+3`** channels = semantic + **center heatmap** + **offset-to-center** (Panoptic-DeepLab); decode = max-pool-NMS peaks → offset-voting assignment (splits touching same-class lesions) → instance class by majority vote, **confidence = center peak value** (learned score). Losses: weighted CE + **CenterNet penalty-reduced focal** (center) + masked **L1** (offset). **Headline = supported-small inst AP vs BOTH src/11 (0.032) and V6 (0.081)** — §8 prints both deltas. Decisions flagged: grouping = center+offset (StarDist is fallback); center loss = focal not MSE; **checkpoint = fg-mIoU + center-recall (v17 FIX — the original val-fg-mIoU-only metric was the root cause of the all-0 version17)**; binary+subtype/higher-res/Dice deferred as separate single-variable runs. Inputs: training dataset + V6. Design: `docs/instance_seg_small_hybrid_notes.md`. Saves `instance_seg_hybrid_baseline.csv` + `instance_seg_small_baseline.pt`.
 - `tools/val_native_yolo_seg.py` — Exp 1A, the canonical mAP baseline every experiment is compared against.
 - `tools/make_clahe_yolo_dataset.py` (1B, CLAHE dataset build), `tools/sweep_yolo_conf.py` (1D, submission threshold).
 - **Removed in the 2026-06-24 cleanup (dead-line files; experiments still documented in the log):**
@@ -97,7 +97,7 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - Use `docs/medsam_refine_research_notes.md` for the MedSAM mask-refinement plan (keep V6 boxes/class/score, swap the coarse YOLO mask for a MedSAM mask to lift large-class IoU) — Phase 0 **RUN, NO-GO** (failure = box quality, not mask quality).
 - Use `docs/small_object_box_quality_notes.md` for the **box-quality / NWD** plan (V15): fix loose tiny boxes at the loss with an NWD-blended box regression loss — the lever both closed lines pointed to. Implemented in `src/08`, built/not-yet-trained.
 - Use `docs/semseg_small_hybrid_notes.md` for the **small-class semantic-segmentation hybrid** (the post-ensemble new line): SMALL caries via boxless per-pixel U-Net, LARGE classes via V6. Implemented in `src/11` = **V16, RUN & FAILED** (supported-small AP 0.032 vs V6 0.081; failure = low resolution + a weak semseg→instance conversion).
-- Use `docs/instance_seg_small_hybrid_notes.md` for **route B** (the src/11 successor): boxless **center+offset INSTANCE** segmentation that replaces the weak semseg→instance conversion (connected-components + mean-prob) with a learned center heatmap + offset head. Implemented in `src/12`, built/not-yet-run. Single-variable vs src/11 (only the instance extraction + score change).
+- Use `docs/instance_seg_small_hybrid_notes.md` for **route B** (the src/11 successor): boxless **center+offset INSTANCE** segmentation that replaces the weak semseg→instance conversion (connected-components + mean-prob) with a learned center heatmap + offset head. Implemented in `src/12` — **V17 RAN & FAILED → NO-GO, line CLOSED.** V1 was all-0 (decode/checkpoint bug); the v17 FIX made the re-run fair — instance machinery validated (center-recall 0.82, 526 instances) but capped by pixel signal (val fg-mIoU ≈0.02 → mask-IoU never clears 0.5 → AP 0). The grouping+score machinery was not the bottleneck; resolution is. Same wall as src/11.
 
 ## Reminders
 
@@ -620,3 +620,64 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
   `instance_seg_small_baseline.pt` (save the CSV as `results/version17_results.csv`). New research note
   `docs/instance_seg_small_hybrid_notes.md`; README structure + CLAUDE notebooks list + project memory
   updated. **Awaiting the Kaggle run.**
+
+### 2026-06-30 — V17 (src/12 route B) RAN & FAILED (all-0); diagnosed + v17 FIX applied (not yet re-run)
+- **Result** (`results/version17_results.csv`, eval-only per-class table): **every caries class
+  `inst_small_AP = 0.000`** — worse than even src/11 semseg (supported-small 0.000 vs 0.032), hybrid
+  aggregate ≈**0.171** vs V6 0.2099. Large classes unaffected (Abrasion 0.637 / Filling 0.269 / Crown
+  0.636 = V6 routing intact), so the failure is 100% in the small-class instance branch.
+- **Diagnosis (NOT a clean scientific no-go).** src/12 uses the SAME semantic head as src/11, which got
+  nonzero (0.032) with crude connected-components — so a *cleaner* 0.000 means the new center+offset
+  decode produced **no usable instances at all**, i.e. a decode/checkpoint failure, not "the machinery
+  has no merit." Route B was never fairly tested. Three compounding causes:
+  1. **Checkpoint = `val_fg_mIoU` only** (root cause) — a semantic proxy that ignores the center head;
+     the selected epoch's center head never crossed the peak threshold → `find_peaks` empty → 0 instances.
+  2. **`PEAK_THRESH=0.30` too high** for a focal-trained heatmap (its sigmoid rarely exceeds 0.30).
+  3. Minor: focal loss divided by 0 on zero-center batches; no focal-stable center-head bias init.
+- **v17 FIX applied to `src/12`** (5 cells; semantic path / src-11 single-variable comparison untouched):
+  - **Checkpoint → `fg-mIoU + center-recall`.** New `validate()` does one val pass computing both the
+    semantic fg-mIoU AND a **center-detection recall** (GT centroid "found" if a predicted peak lands
+    within `CENTER_MATCH_RADIUS=16` px, peak floor `CENTER_PROXY_FLOOR=0.05`); checkpoint on the sum so
+    the saved model must localize centers. Per-epoch log now prints `c-rec` + `ctr_max`.
+  - **Decode: `PEAK_THRESH 0.30 → 0.05`** (+ `MAX_INSTANCES=200` cap, peaks ranked by score). mAP wants
+    recall and only cares about candidate *ranking*, so a low floor + score-ranking is correct.
+  - **Center-head focal-stable bias init** (`segmentation_head[0].bias[N_SEM] = -2.19`, sigmoid≈0.1
+    prior — center channel only, semantic/offset keep default init) + **focal zero-positive guard**
+    (`/clamp(n,min=1)`).
+  - **Decode diagnostics**: prints total instances, center-heatmap max (mean/p90/max), peaks-per-image,
+    and **#images with 0 peaks** — so a "no instances" failure is visible immediately, not silently 0.
+  - Markdown cells 5/6 updated; all 10 code cells compile; 15-point consistency check passes.
+- **Gotcha during the edit**: the user had the notebook open in the IDE, and an editor save **reverted
+  4 of the 5 edited cells** back to the broken originals (only the config cell survived). Re-applied all
+  four; **before re-running, reload/revert the notebook in the IDE** so the run uses the on-disk version,
+  not a stale editor buffer. Verify by seeing `def validate():` + `combo = fg_miou + crec` (train cell)
+  and `images with 0 peaks` (decode cell).
+- **How to read the re-run**: first the decode diagnostics — `#images with 0 peaks` should drop, `ctr_max`
+  be >0.1, instances go 0→hundreds = fix worked; THEN judge the headline (supported-small inst AP vs
+  src/11 0.032 and V6 0.081) as the now-fair route-B test. **`results/version17_results.csv` holds the
+  failed V1 run; the re-run overwrites/appends it.** Docs (README/EN/CN logs) NOT updated yet — wait for
+  real re-run numbers before writing a conclusion.
+
+### 2026-06-30 — V17 (src/12 route B) RE-RAN with the v17 FIX → FAIR test, NO-GO; line CLOSED; docs updated
+- **The v17 FIX worked — this re-run is a *fair* test (not the V1 decode bug).** Run log diagnostics:
+  training reached **center-recall 0.82** (`loaded best fg-mIoU 0.0189 + c-rec 0.8178, combo 0.8367`);
+  decode produced **526 instances over 83 images**, center-heatmap max mean 0.197 / max 0.415, **11.7
+  peaks/image, only 1/83 images with 0 peaks.** Center+offset grouping + the learned peak score behave
+  exactly as designed → the instance machinery is validated.
+- **Result (`results/version17_results.csv`, re-run): every supported-small `inst_small_AP = 0.000`,
+  `hybrid_AP = 0.000`, hybrid aggregate ≈ 0.171** (< V6 0.2099). Large classes intact via V6 routing
+  (Abrasion 0.637 / Filling 0.269 / Crown 0.636).
+- **Root cause = pixel/mask quality, NOT the machinery.** `val fg-mIoU` stayed ≈ **0.008–0.032** (best
+  0.0189) — predicted caries pixels overlap GT at only ~2%. mAP50-95 needs mask IoU ≥ 0.5 for a TP; none
+  of the 526 instances clear it → AP = 0 at every threshold. The 512×1024 resize starves tiny caries of
+  pixels (the same resolution confounder as V16/src/11).
+- **Decision (with user): NO-GO → line CLOSED.** This is the pre-registered "No-go" branch (machinery
+  wasn't the bottleneck; resolution is). One confound left un-chased: the FIX's checkpoint `combo =
+  fg_miou + c_rec` is numerically dominated by c-rec (0.5–0.8 vs fg-mIoU 0.01–0.03), so it picked a
+  *low*-fg-mIoU epoch (0.0189 when ep39 had 0.0317); re-weighting could only lift fg-mIoU to ~0.03 ≈
+  src/11 — still flat → judged not worth a re-train. **4th line to hit the same small-class wall**
+  (two-stage, MedSAM, V16 semseg, V17 instance seg); the mAP-weight caveat bounded the upside anyway.
+  **2-model V6+V10 ensemble + multi-view TTA (LB 0.31753) stays production.**
+- **Docs updated**: README (V17 history row → NO-GO + footnote ‖ + structure line), EN/CN logs (§8.2
+  header + full V17 result section + §8 header), `docs/instance_seg_small_hybrid_notes.md` (status banner
+  + RESULT section), CLAUDE.md (overview + notebooks list + docs-rules line + this entry), project memory.

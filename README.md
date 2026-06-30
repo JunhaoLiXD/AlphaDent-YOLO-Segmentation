@@ -66,7 +66,7 @@ AlphaDent/
 │   ├── 09-ensemble-tta-eval.ipynb                      # V6+V10 ensemble + TTA val check; §7b sweeps NMS-IoU/vflip/mscale/conf-weight + 3-model V9
 │   ├── 10-ensemble-tta-submission.ipynb                # ensemble + multi-view TTA (hflip+vflip+mscale) submission, conf floor on val — LB 0.31753
 │   ├── 11-semseg-small-hybrid-baseline.ipynb           # semantic-seg hybrid (V16, FAILED: small AP 0.032 vs V6 0.081)
-│   └── 12-instance-seg-small-hybrid-baseline.ipynb     # route B (built): boxless center+offset INSTANCE seg for small caries (fixes src/11's instance+score holes)
+│   └── 12-instance-seg-small-hybrid-baseline.ipynb     # route B (V17, NO-GO): boxless center+offset INSTANCE seg; machinery validated (c-rec 0.82) but capped by pixel signal (fg-mIoU ~0.02 → AP 0)
 ├── models/                     # Local trained checkpoints — NOT tracked in git (see .gitignore)
 │   ├── version6_best.pt        # V6 detector (production; ensemble member)
 │   ├── version10_best.pt       # V10 detector (production; ensemble member)
@@ -103,7 +103,7 @@ AlphaDent/
 | V14 | (eval-only) | 768 | MedSAM box-prompted mask swap, zero training | —‡ | NO-GO |
 | V15 | YOLOv8s-seg | 768 | NWD-blended box regression loss (λ=0.5, C=5.0) | ~0.24§ | ≈0 (plateau) |
 | V16 | (eval-only) hybrid | 512×1024 | Boxless **semantic**-seg for small caries + V6 large | —¶ | NO-GO |
-| V17 | (eval-only) hybrid | 512×1024 | Boxless **center+offset INSTANCE**-seg for small caries + V6 large | pending | not yet run |
+| V17 | (eval-only) hybrid | 512×1024 | Boxless **center+offset INSTANCE**-seg for small caries + V6 large | —‖ | NO-GO |
 
 \* V12's 0.2215 is a single-epoch spike (ep32); the sustained level is ~0.21. See the V12 section in the experiment log.
 
@@ -114,6 +114,8 @@ AlphaDent/
 § V15's best 0.2415 is a single-epoch spike; the sustained level is ~0.228, i.e. at the V6 plateau (no clear win). Its box-quality leading indicator (small-Caries recall@IoU0.5) **regressed**, so the NWD-default run failed. See the V15 section.
 
 ¶ V16 is an **eval-only** hybrid (`results/version16_results.csv`, per-class AP, not a per-epoch curve): boxless **semantic** segmentation for the small caries classes (`src/11`), large classes via V6. Supported-small (caries 1/2/3/5) semseg AP = **0.032 vs V6 0.081** (≈−60%); hybrid aggregate **0.1855 vs V6 0.2099** → NO-GO. Failure = two deficits multiply (low resolution + a weak semseg→instance conversion). V17 (`src/12`, route B) replaces that conversion with a learned center+offset instance head. See §8 of the experiment log.
+
+‖ V17 is the **eval-only** route-B hybrid (`results/version17_results.csv`, per-class AP; `src/12`): boxless **center+offset INSTANCE** seg for the small caries classes (learned grouping + learned peak score), large classes via V6. After the v17 FIX the re-run is a *fair* test — the instance machinery is validated (center-recall **0.82**, 526 instances, only 1/83 images with 0 peaks) — but every supported-small `inst_small_AP = 0.000` and hybrid aggregate ≈ **0.171** (< V6 0.2099), because the semantic mask quality (val fg-mIoU ≈ **0.02**) is far too low to clear the strict mask-IoU≥0.5 bar. **NO-GO: the grouping+score machinery was not the bottleneck; the pixel signal (resolution) is** — same wall as V16. Line closed; the 2-model ensemble (LB 0.31753) stays production. See §8 of the experiment log.
 
 > **Best submission is not a training version:** the production submission is the **V6+V10 ensemble + multi-view TTA** (hflip+vflip+mscale; public LB **0.31753**, see the Current Best Result section), an inference-time combination of V6 and V10 — not a single trained model, so it is not a row in this table.
 

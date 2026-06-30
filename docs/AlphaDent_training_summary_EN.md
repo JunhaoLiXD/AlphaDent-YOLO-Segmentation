@@ -1119,7 +1119,7 @@ axis** — a small-class **semantic-segmentation hybrid** that bypasses the box 
 that escapes the box-quality wall; run an oracle upper-bound first), or accept the plateau.
 ---
 
-## 8. Small-class segmentation hybrid — off the box axis (V16 failed, route B built)
+## 8. Small-class segmentation hybrid — off the box axis (V16 + route-B V17 both failed → line closed)
 
 After the ensemble/diversity lever was exhausted (§7.3), the next direction left the box paradigm
 entirely: segment the **small (caries) classes** at the pixel level and keep **V6 for the large
@@ -1161,7 +1161,7 @@ per-pixel** (a borderline pixel flips class → wrong-class instance). Tiling / 
 fixes deficit (1). This is why the route did not even beat V6's *loose-box* detector: escaping the box
 is necessary but not sufficient — the instance/score machinery has to be learned, not improvised.
 
-### 8.2. Route B: boxless center+offset INSTANCE segmentation (`src/12`) — BUILT, not yet run
+### 8.2. Route B: boxless center+offset INSTANCE segmentation (`src/12`) — V17, RUN & FAILED (NO-GO)
 
 The fix for §8.1's deficit (2): replace the two improvised pieces — connected-components instances and
 mean-prob confidence — with **learned** machinery, while holding everything else identical to src/11
@@ -1199,5 +1199,29 @@ subtype head, higher resolution / tiling, Dice/Focal semantic loss.
   and keep the 2-model ensemble (LB 0.31753) as production.
 
 Design note: `docs/instance_seg_small_hybrid_notes.md`. Outputs: `instance_seg_hybrid_baseline.csv`
-(save as `results/version17_results.csv`) + `instance_seg_small_baseline.pt`. **Awaiting the Kaggle
-run.**
+(saved as `results/version17_results.csv`) + `instance_seg_small_baseline.pt`.
+
+**Result (V17, re-run with the v17 FIX — `results/version17_results.csv`).** The first run (V1) scored
+all-0 from a decode/checkpoint bug (the checkpoint metric ignored the center head → zero peaks → zero
+instances); the v17 FIX (checkpoint on `fg-mIoU + center-recall`, `PEAK_THRESH` 0.30→0.05, center-head
+bias init, decode diagnostics) made the re-run **fair**:
+
+- **The instance machinery is validated.** Training reached **center-recall 0.82** (`loaded best fg-mIoU
+  0.0189 + c-rec 0.8178`); decode produced **526 instances over 83 images**, center-heatmap max mean
+  0.197 / max 0.415, **11.7 peaks/image, only 1/83 images with 0 peaks**. Center+offset grouping and the
+  learned peak score work as designed — this is no longer the V1 zero-instance failure.
+- **But every supported-small `inst_small_AP = 0.000`, hybrid aggregate ≈ 0.171** (< V6 0.2099; large
+  classes intact via V6 routing — Abrasion 0.637 / Filling 0.269 / Crown 0.636).
+- **Root cause = pixel/mask quality, not the machinery.** `val fg-mIoU` stayed ≈ **0.008–0.032** (best
+  0.0189) — predicted caries pixels overlap GT at only ~2%. Mask mAP50-95 needs IoU ≥ 0.5 for a TP; none
+  of the 526 instances clear it → AP = 0 at every threshold. The 512×1024 resize starves tiny caries of
+  pixels (the §8.1 resolution confounder).
+
+This is the pre-registered **No-go** branch: *the grouping+score machinery was not the bottleneck; the
+pixel signal (resolution) is.* One confound left un-chased — the FIX's checkpoint `combo = fg_miou +
+c_rec` is numerically dominated by c-rec (0.5–0.8 vs fg-mIoU 0.01–0.03), so it selected a *low*-fg-mIoU
+epoch (0.0189 when ep39 had 0.0317); re-weighting could lift fg-mIoU back to ~0.03 ≈ src/11, still flat
+→ judged not worth a re-train. **Line CLOSED.** This is the 4th line to hit the same small-class wall
+(two-stage, MedSAM, V16 semseg, now V17 instance seg); the standing mAP-weight caveat means the upside
+was bounded even on success. **The 2-model V6+V10 ensemble + multi-view TTA (LB 0.31753) stays
+production.**

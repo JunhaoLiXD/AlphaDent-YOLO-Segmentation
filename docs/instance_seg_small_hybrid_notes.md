@@ -1,9 +1,40 @@
 # Boxless INSTANCE segmentation (center+offset) for the small classes — research notes
 
-> **Status (2026-06-26): route B baseline BUILT (`src/12`), not yet run.** Direct successor to the
-> semantic-seg hybrid (`src/11`, V16) which FAILED (supported-small AP 0.032 vs V6 0.081). This fixes
+> **Status (2026-06-30): line CLOSED / NO-GO after a FAIR re-run.** The v17 FIX worked — the instance
+> machinery is validated (center-recall 0.82, 526 instances over 83 val images, only 1 image with 0
+> peaks) — but every supported-small instance AP is still **0.000** because the underlying semantic mask
+> quality is far too low (val fg-mIoU ≈ 0.02) to clear the strict mask-IoU≥0.5 bar. So route B is now
+> *fairly* tested: **the grouping+score machinery was NOT the bottleneck; the pixel signal (resolution)
+> is.** Same wall as src/11. Closing the line; the **2-model V6+V10 ensemble + multi-view TTA (LB
+> 0.31753) stays production.** Full result below.
+
+## RESULT — V17 re-run (2026-06-30): machinery validated, capped by pixel signal → NO-GO
+
+`results/version17_results.csv` (re-run, overwrites the failed V1 all-0 table). Decode diagnostics
+(from the run log) confirm the v17 FIX fully took effect:
+
+- **Instance machinery works:** training reached **center-recall 0.82** (`loaded best fg-mIoU 0.0189 +
+  c-rec 0.8178, combo 0.8367`); decode produced **526 instances over 83 images**, center-heatmap max
+  mean 0.197 / max 0.415, **11.7 peaks/image, only 1/83 images with 0 peaks**. This is *not* the V1
+  zero-instance failure — center+offset grouping + the learned peak score behave as designed.
+- **But every caries `inst_small_AP = 0.000`, `hybrid_AP = 0.000`; hybrid aggregate ≈ 0.171** (< V6
+  0.2099). Large classes intact via V6 routing (Abrasion 0.637 / Filling 0.269 / Crown 0.636).
+- **Root cause = pixel/mask quality, not the instance machinery.** `val fg-mIoU` stayed ≈ **0.008–0.032**
+  all run (best epoch 0.0189) — the predicted caries pixels overlap GT at only ~2%. mAP50-95 needs mask
+  IoU ≥ 0.5 for a TP; none of the 526 instances clear it → AP collapses to 0 at every threshold. The
+  512×1024 resize starves tiny caries of pixels (the resolution confounder src/11 already flagged).
+
+This lands on the pre-registered **No-go** branch ("instance/score machinery was not the bottleneck →
+resolution"). Note one confound left un-chased: the v17 checkpoint metric `combo = fg_miou + c_rec` is
+numerically **dominated by c-rec** (0.5–0.8 vs fg-mIoU 0.01–0.03), so it selected for center recall and
+picked a *low*-fg-mIoU epoch (0.0189 when ep39 had 0.0317). Re-weighting it could lift fg-mIoU back to
+~0.03 ≈ src/11 — still flat / no-go — so it was judged not worth a re-train. **Line closed.**
+
+> **Original status (2026-06-26): route B baseline BUILT (`src/12`), not yet run.** Direct successor to
+> the semantic-seg hybrid (`src/11`, V16) which FAILED (supported-small AP 0.032 vs V6 0.081). This fixes
 > the two structural holes that sank src/11 — connected-components instances and mean-prob confidence —
-> with learned machinery, holding everything else identical. V6+V10 ensemble stays production (LB 0.31753).
+> with learned machinery, holding everything else identical. (V1 ran all-0 = a decode/checkpoint bug, not
+> a fair test; the v17 FIX above made the re-run fair → the NO-GO is now real.)
 
 ## Why this line (what src/11 got wrong)
 
