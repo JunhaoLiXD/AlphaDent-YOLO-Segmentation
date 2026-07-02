@@ -94,18 +94,32 @@ Several controlled experiments have been performed.
 | V11 | YOLOv8s-seg | 768 | Plan D: `mosaic=0`, `mixup=0`, `copy_paste=0.2` | 0.2135 |
 | V12 | YOLOv8s-seg + P2 head | 768 | Stride-4 (P2) small-object segment head | 0.2215* |
 | V13 | YOLOv8s-seg (tiles) | 640/tile | Crop / tile-based training | 0.0993† |
+| V14 | (eval-only) | 768 | MedSAM box-prompted mask swap, zero training | NO-GO‡ |
+| V15 | YOLOv8s-seg | 768 | NWD-blended box regression loss (λ=0.5, C=5.0) | ~0.24§ |
+| V16 | (eval-only) hybrid | 512×1024 | Boxless **semantic**-seg for small caries + V6 large | NO-GO¶ |
+| V17 | (eval-only) hybrid | 512×1024 | Boxless **center+offset INSTANCE**-seg small caries + V6 large | NO-GO‖ |
 
 \* V12's 0.2215 is a single-epoch spike (ep32); the sustained level is ~0.21.
 
 † V13's 0.0993 is the comparable full-image (tiled + merged) Mask mAP50-95, vs V6 re-scored with
 the same code (0.2099) — not vs the historical 0.234. See the experiment log.
 
-Current best baseline (V10 is technically highest; improvement over V6 is negligible; V11/V12/V13
-all failed to beat it):
+‡ V14 is eval-only (MedSAM Phase 0): keep V6's box/class/score, swap only the mask. Blanket swap
+regressed the aggregate (−0.015); the win was Abrasion-only. Failure = box quality, not mask quality.
 
-```text
-YOLOv8s-seg + imgsz=768 + mild rare Caries oversampling
-```
+§ V15's best 0.2415 is a single-epoch spike; sustained ~0.228 = at the V6 plateau. The box-quality
+leading indicator (small-Caries recall@IoU0.5) **regressed**, so the NWD-default run failed (line on hold).
+
+¶ V16 (eval-only hybrid): boxless semantic-seg for small caries. Supported-small AP 0.032 vs V6 0.081
+(≈−60%); hybrid aggregate 0.1855 vs V6 0.2099. Failure = low resolution + a weak semseg→instance conversion.
+
+‖ V17 (eval-only hybrid): boxless center+offset INSTANCE seg (learned grouping + peak score). After a
+fix the machinery is validated (center-recall 0.82, 526 instances) but every supported-small AP = 0.000
+because val fg-mIoU ≈0.02 never clears mask-IoU≥0.5 → capped by pixel signal (resolution), not machinery.
+
+**The best full-image single model is V6/V10 (≈0.234) — every version after it (V11–V17) failed to
+beat it.** But the best *submission* is not a single trained model: it is the **V6+V10 ensemble +
+multi-view TTA** (public LB **0.31753**), an inference-time combination — see §6.
 
 ---
 
@@ -189,29 +203,71 @@ The error analysis showed that:
 
 ---
 
-## 6. Current Best Baseline
+### 5.8 Inference-time ensemble + TTA (the one lever that helped the leaderboard)
 
-The current best run is V10 (though the improvement over V6 is negligible). V11, V12, and V13 all
-failed to beat it, and V13 (tiling) regressed severely (−0.11):
+After every training-time lever plateaued, the **zero-training, all-class** lever finally moved the
+leaderboard: ensemble the two near-tied diverse models (V6 + V10) and add manual test-time
+augmentation (Ultralytics `augment=True` is a no-op for seg). Full-image inference, each model on the
+image + augmented views (mirrored/rescaled back), pooled and merged by class-wise NMS.
 
-```text
-Model:           yolov8s-seg.pt
-Image size:      768
-Oversampling:    mild rare Caries oversampling
-Best checkpoint: weights/best.pt
-Best Mask mAP50-95: approximately 0.2341  (V10)
-Previous best:   approximately 0.2336       (V6, essentially the same)
-```
+- **hflip-only ensemble** (`src/09` §1–8): val Mask mAP 0.2134 vs V6 0.2053 (+0.008) → **public LB
+  0.31189** vs single V6 0.27047 (**+0.041**).
+- **+vflip+multi-scale (640/896)** (`src/09` §7b, production): val 0.2173 → **public LB 0.31753**
+  (**+0.0056** over hflip-only). This is the current best submission (`src/10`).
+- **3-model (add V9 yolov8m):** no aggregate help (−0.0019 vs 2-model) — V9 lifts the large classes
+  but drags the small Caries; the ensemble/diversity lever is **exhausted**. Keep the 2-model config.
 
-For practical purposes, either V6 (higher precision) or V10 (higher recall) can be used as the
-reference baseline. **Submissions should use V6/V10 — V13 tiling is not a viable submission model.**
+Note the **LB gain (+0.041) is ~5× the comparable-val-metric gain (+0.008)** — the local metric is a
+conservative directional signal, not an absolute predictor of the leaderboard.
+
+### 5.9 Post-plateau lines that all hit the same wall
+
+Four separate attempts to lift the small (Caries) classes were run after V13; **all failed at the
+same root cause** — a loose/low-resolution pixel signal for tiny lesions:
+
+- **Two-stage detect-then-refine (V-line via `src/04–06`, CLOSED):** oracle (GT boxes) validated a
+  +0.11..+0.22 small-Caries ceiling, but on *real* V6 boxes every pipeline variant scored below V6
+  even at the perfect-FP ceiling → the gap is **Stage-1 box quality**, unreachable with a real detector.
+- **MedSAM mask swap (V14, NO-GO):** loose V6 Caries boxes make SAM segment the whole tooth → box
+  quality, not mask quality.
+- **NWD box loss (V15, on hold):** blending NWD globally at λ=0.5 diluted the CIoU signal; recall
+  regressed. A C-sweep / size-gated NWD remain untried but the line is paused.
+- **Boxless semantic (V16) & instance (V17) seg hybrids (NO-GO):** bypass the box entirely, but the
+  512×1024 resize starves tiny caries of pixels (val fg-mIoU ≈0.02) → masks never clear mask-IoU≥0.5.
+
+**Key reframing that explains all of them (mAP weight ≠ object count):** mAP is per-class-averaged and
+carried by the large/common classes (Abrasion, Crown), which are near saturation; the rare tiny Caries
+are low-weight, so even perfect small-class localization would move the aggregate only modestly.
 
 ---
 
-## 7. Recommended Next Experiment
+## 6. Current Best (submission vs single model)
 
-Every lever on the full-image YOLO approach — and the two structural changes meant to break it —
-has now been tested and none beat the baseline:
+**Best submission (public LB 0.31753):** the **V6+V10 ensemble + multi-view TTA** (hflip + vflip +
+multi-scale 640/896, full-image, class-wise NMS), produced by `src/10` with the confidence floor tuned
+on val. This took **zero additional training**. It is an inference-time combination of two models, not
+a single trained checkpoint.
+
+**Best single full-image model (Mask mAP50-95 ≈0.234):**
+
+```text
+Model:              yolov8s-seg.pt
+Image size:         768
+Oversampling:       mild rare Caries oversampling (V10) / none (V6)
+Best checkpoint:    weights/best.pt
+Best Mask mAP50-95: ~0.2341 (V10) / ~0.2336 (V6) — essentially tied
+```
+
+V6 (higher precision) and V10 (higher recall) are the two ensemble members. Every training version
+after them (V11–V17) failed to beat this single-model level; the productive gain came from the
+inference-time ensemble, not a better-trained model.
+
+---
+
+## 7. Project status — all training lines closed
+
+Every lever on the full-image YOLO approach — and every structural change meant to break it — has now
+been tested and none beat the single-model baseline:
 
 - Image size: `640` → `768` helped; `768` → `896` did not (V7, V8).
 - Model size: YOLOv8m did not improve over YOLOv8s (V9).
@@ -219,61 +275,30 @@ has now been tested and none beat the baseline:
 - Augmentation (V11): disabling mosaic + adding copy-paste regressed by 0.020.
 - Architecture (V12): a P2 small-object head did not help and did not improve recall.
 - Input scale (V13): tile-based training regressed severely (−0.11) by destroying the large classes.
+- Small-class refinement (two-stage, MedSAM, NWD, semseg/instance-seg hybrids): all hit the loose-box /
+  low-resolution wall (§5.9).
 
-Crop/tile training — once the recommended next step — has now been run as V13 and **failed**, so it
-is no longer recommended as a wholesale replacement for full-image training. The remaining options,
-in order of preference:
-
-1. **Keep V6/V10 (≈0.234) as the production baseline.** Still the best model; use it for submissions.
-2. **Hybrid (only if small lesions are still pursued).** Full-image model for the large classes +
-   tiling as an *auxiliary* small-object branch, never replacing full-image training. This is the
-   only tiling variant that does not sacrifice the large objects.
-3. **Clean copy-paste ablation (low effort, does not touch the large classes).** Keep `mosaic=1.0`,
-   `mixup=0`, add `copy_paste=0.2–0.3`; isolates copy-paste without the mosaic-removal side effect
-   that sank V11.
-4. **Accept the ceiling.** The large classes are near saturation and the tiny Caries are low-weight,
-   so ~0.23–0.24 may be the practical ceiling for this model/dataset.
+**Conclusion: the productive gain is the inference-time V6+V10 ensemble + multi-view TTA (LB 0.31753);
+that is production. No training line is currently active.** Should the plateau be revisited, the only
+un-chased threads are the V15 NWD **C-sweep / size-gated** variants (`docs/small_object_box_quality_notes.md`)
+and higher-resolution small-class seg — but the mAP-weight reframing bounds the upside of any small-class
+work, so accepting the ~0.23–0.24 single-model ceiling (and shipping the ensemble) is the honest default.
 
 ---
 
-## 8. Future Optimization Directions
+## 8. Research notes index
 
-The full-image approach is plateaued and naive tiling has been ruled out (V13). Future work should
-preserve the large classes that carry the metric while still attacking the tiny lesions.
+The closed/paused experiment lines each keep a design + result note:
 
-Possible directions:
+1. **Two-stage detect-then-refine** — [`small_object_research_notes.md`](small_object_research_notes.md) (CLOSED/NO-GO).
+2. **MedSAM mask refinement** — [`medsam_refine_research_notes.md`](medsam_refine_research_notes.md) (NO-GO).
+3. **NWD box-quality loss (V15)** — [`small_object_box_quality_notes.md`](small_object_box_quality_notes.md) (on hold; C-sweep/size-gate untried).
+4. **Semantic-seg small-class hybrid (V16)** — [`semseg_small_hybrid_notes.md`](semseg_small_hybrid_notes.md) (NO-GO).
+5. **Instance-seg small-class hybrid (V17)** — [`instance_seg_small_hybrid_notes.md`](instance_seg_small_hybrid_notes.md) (CLOSED/NO-GO).
+6. **Unimplemented loss ideas** — [`future_loss_modification_notes.md`](future_loss_modification_notes.md) (focal / class-weighted BCE / Tversky, research only).
 
-1. **Hybrid full-image + auxiliary tiling**
-   - Full-image model handles the large classes (Abrasion, Crown, Filling).
-   - Tiling is used only as an auxiliary branch for tiny Caries, then merged.
-   - Avoids V13's failure mode (large objects fragmented and dropped).
-
-2. **Two-stage detect-then-refine pipeline** (ACTIVE experiment — see
-   [`docs/small_object_research_notes.md`](small_object_research_notes.md))
-   - Stage 1: V6 detector (tuned for recall, conf≈0.05) localizes boxes.
-   - Stage 2: a trained refiner (U-Net + ImageNet ResNet18) re-classifies + re-segments small-box
-     crops at native resolution; large boxes route straight to V6 (the V13 guard).
-   - **Status (2026-06-17):** Phase 0 oracle validated the ceiling (small Caries +0.11..+0.22,
-     `src/04`); Phase 1a gate **passed** (V6 small-Caries recall ≈0.58–0.89 @conf0.05) but Phase 1b
-     transfer was **weak** (`full@0.05`=0.182 < V6 0.210 — no background class; `src/05`). Phase 1c
-     (`src/06`, retrain on real V6 boxes + a background class, warm-started) is **built, not yet
-     trained** — the run that decides whether this beats V6.
-
-3. **Per-class tuning**
-   - Track per-class mAP after each training run.
-   - Remember mAP weight ≠ object count: gains on rare tiny Caries barely move the aggregate.
-
-4. **Validation threshold tuning**
-   - Tune confidence threshold on validation set.
-   - Avoid globally lowering confidence without checking false positives.
-
-5. **K-fold validation**
-   - The validation set is small.
-   - K-fold can provide a more reliable estimate, especially for rare classes.
-
-6. **Loss modifications (research notes)**
-   - See `docs/future_loss_modification_notes.md` (focal / class-weighted BCE / Tversky) —
-     unimplemented.
+The authoritative per-version narrative lives in [`AlphaDent_training_summary_EN.md`](AlphaDent_training_summary_EN.md)
+(and its `_CN` mirror).
 
 ---
 

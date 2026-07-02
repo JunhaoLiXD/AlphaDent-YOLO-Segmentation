@@ -40,7 +40,9 @@ AlphaDent/
 │   ├── future_loss_modification_notes.md     # Research notes: loss ideas (unimplemented)
 │   ├── small_object_research_notes.md        # Research notes: two-stage detect-then-refine (CLOSED)
 │   ├── medsam_refine_research_notes.md       # Research notes: keep V6 boxes, swap mask via MedSAM (NO-GO)
-│   └── small_object_box_quality_notes.md     # Research notes: fix loose tiny boxes at the loss (NWD, V15)
+│   ├── small_object_box_quality_notes.md     # Research notes: fix loose tiny boxes at the loss (NWD, V15, on hold)
+│   ├── semseg_small_hybrid_notes.md          # Research notes: boxless semantic-seg for small caries (V16, NO-GO)
+│   └── instance_seg_small_hybrid_notes.md    # Research notes: boxless center+offset INSTANCE seg (V17, CLOSED/NO-GO)
 ├── results/
 │   ├── version5_results.csv    # Training metrics per epoch, V5
 │   ├── version6_results.csv    # V6
@@ -53,7 +55,8 @@ AlphaDent/
 │   ├── version13_results.csv   # V13 (tile training, severe regression −0.11)
 │   ├── version14_results.csv   # MedSAM Phase 0 eval (per-class AP per variant; NO-GO)
 │   ├── version15_results.csv   # V15 (NWD box loss, λ=0.5/C=5.0) — underwhelmed, sat at plateau
-│   └── version16_results.csv   # V16 (src/11 semseg hybrid) per-class AP — NO-GO (small AP 0.032 vs V6 0.081)
+│   ├── version16_results.csv   # V16 (src/11 semseg hybrid) per-class AP — NO-GO (small AP 0.032 vs V6 0.081)
+│   └── version17_results.csv   # V17 (src/12 instance-seg hybrid) per-class AP — NO-GO (small AP 0.000; capped by pixel signal)
 ├── src/
 │   ├── 01-yolo-seg-baseline-training-alphadent.ipynb   # V13: tile + train (self-contained)
 │   ├── 02-alphadent-yolo-seg-submission.ipynb          # V13: tiled inference + submission
@@ -69,8 +72,9 @@ AlphaDent/
 │   └── 12-instance-seg-small-hybrid-baseline.ipynb     # route B (V17, NO-GO): boxless center+offset INSTANCE seg; machinery validated (c-rec 0.82) but capped by pixel signal (fg-mIoU ~0.02 → AP 0)
 ├── models/                     # Local trained checkpoints — NOT tracked in git (see .gitignore)
 │   ├── version6_best.pt        # V6 detector (production; ensemble member)
-│   ├── version10_best.pt       # V10 detector (production; ensemble member)
-│   └── version15_best.pt       # V15 (NWD) — line on hold
+│   └── version10_best.pt       # V10 detector (production; ensemble member)
+│   # V9 (yolov8m) + V15 (NWD) weights were removed 2026-07-02 — their lines are exhausted/on hold;
+│   # regenerate from src/08 (V15) or a yolov8m run (V9) if either is revived.
 └── tools/
     ├── val_native_yolo_seg.py      # canonical native YOLO Mask mAP baseline (Exp 1A)
     ├── sweep_yolo_conf.py          # submission confidence-threshold sweep (Exp 1D)

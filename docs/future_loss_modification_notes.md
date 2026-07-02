@@ -8,9 +8,13 @@
 
 ## Motivation
 
-Current best mask mAP50-95 = **0.2341** (V10). The plateau has since been confirmed
-across V6–V13: augmentation changes (V11, −0.020), a P2 small-object head (V12, no gain),
-and crop/tile training (V13, −0.11) all failed to beat it.
+Current best single model = **0.2341** mask mAP50-95 (V10); the best *submission* is the V6+V10
+ensemble + multi-view TTA (public LB 0.31753, zero training). The single-model plateau has since been
+confirmed across V6–V17: augmentation changes (V11, −0.020), a P2 small-object head (V12, no gain),
+crop/tile training (V13, −0.11), and the four post-plateau small-class lines (two-stage / MedSAM /
+NWD / semseg+instance-seg hybrids, all NO-GO) each failed to beat it. These loss ideas remain
+**unimplemented** — a possible thread if the plateau is ever revisited, but the caveat below bounds
+their upside.
 
 > **Important caveat from V13 (mAP weight ≠ object count).** Error analysis found ~78% of
 > objects occupy <1% of the image, but that is the *object-count* distribution, not the
