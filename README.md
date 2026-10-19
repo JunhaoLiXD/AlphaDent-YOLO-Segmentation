@@ -1,7 +1,7 @@
 # AlphaDent — YOLO Instance Segmentation for Dental Finding Detection
 
 A machine learning project for the Kaggle competition **AlphaDent: Teeth Marking**.  
-The task is to detect and segment dental findings (Caries, Crown, Abrasion, etc.) from panoramic X-ray images using YOLO instance segmentation models.
+The task is to detect and segment dental findings (Caries, Crown, Abrasion, etc.) from intraoral dental photographs (DSLR images of the teeth) using YOLO instance segmentation models.
 
 ---
 
@@ -155,7 +155,7 @@ V12 attacked the small-object bottleneck at the **architecture** level: a stride
 
 ## V13 — crop / tile-based training (trained, FAILED −0.11)
 
-V12 suggested the bottleneck was the **full-image input**, so V13 changed it: each panoramic image is sliced into overlapping tiles and the model trains on the tiles, so a lesion that was ~5 px in the downscaled full image becomes ~20–40 px in a tile. Stock `yolov8s-seg`, clean V6 augmentation, tiled input as the single change vs V6.
+V12 suggested the bottleneck was the **full-image input**, so V13 changed it: each dental photo is sliced into overlapping tiles and the model trains on the tiles, so a lesion that was ~5 px in the downscaled full image becomes ~20–40 px in a tile. Stock `yolov8s-seg`, clean V6 augmentation, tiled input as the single change vs V6.
 
 **Result (comparable full-image metric, same code for both models — `src/03-alphadent-val-map-eval.ipynb`):**
 
