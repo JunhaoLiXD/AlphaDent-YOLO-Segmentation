@@ -37,7 +37,7 @@ lesions merge; the confidence is a proxy) — a baseline limitation to revisit i
 - Self-contained Kaggle notebook (20 cells). Inputs: training dataset (`yolo_seg_train.yaml`, train+val
   images **and** labels) + the **V6** detector.
 - Trains a multiclass `U-Net(resnet18, imagenet)` over {background, caries...} at a fixed `512×1024`
-  resize (panoramic ~2:1; normalized polygon coords are resize-invariant, so instances map straight back
+  resize (images ~2:1; normalized polygon coords are resize-invariant, so instances map straight back
   to full-image space). CE loss with background down-weighted (`BG_WEIGHT=0.2`) for the severe imbalance;
   checkpoint by **val foreground mIoU**.
 - Inference → small-class instances (above). Large-class instances from V6 (large classes only).

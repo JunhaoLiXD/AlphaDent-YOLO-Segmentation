@@ -172,7 +172,7 @@ only in the IoU≳0.8 bin, formally proving box quality is the sole lever.
 
 ## The core idea — detect at a reasonable resolution, refine at native resolution
 
-Tiny lesions are only ~10–20 px after a panoramic image is downscaled to the detector's input, so
+Tiny lesions are only ~10–20 px after a full dental photo is downscaled to the detector's input, so
 the detector has no signal (this is exactly why V12's P2 head and V13's tiling did not recover
 recall). Instead of changing the detector's input globally, refine **locally**:
 

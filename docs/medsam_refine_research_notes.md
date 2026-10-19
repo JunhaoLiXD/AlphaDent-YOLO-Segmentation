@@ -105,7 +105,7 @@ tells us how much survives, and Phase 0 has earned a Phase 1.
 1. **Prompt type = box.** V6 outputs boxes; box prompts are more stable than points and tolerate
    loose framing. (Optionally add the box-center point as an extra positive prompt — ablation.)
 2. **Full image vs ROI crop.** SAM internally resizes the input to 1024², so a tiny lesion in a full
-   panoramic image has almost no effective resolution. **Recommended: crop the box ROI (with context
+   dental photo has almost no effective resolution. **Recommended: crop the box ROI (with context
    padding) from the original-resolution image and run MedSAM on the crop**, then map the mask back —
    the same context-vs-effective-resolution trade-off as the Stage-2 padding ablation
    (`PAD_FACTOR` 1.0 / 1.5 / 2.0). For large boxes this matters less; for small ones it is decisive.
@@ -135,7 +135,7 @@ tells us how much survives, and Phase 0 has earned a Phase 1.
 
 ## Risks / pitfalls
 
-- **Domain gap.** MedSAM is trained mostly on CT/MRI/endoscopy/pathology; dental panoramic X-ray is
+- **Domain gap.** MedSAM is trained mostly on CT/MRI/endoscopy/pathology; dental photography is
   partially out-of-distribution. Zero-shot masks may underperform — this is exactly what Phase 0
   measures, and the optional fine-tune below is the fallback.
 - **Loose/over-confident SAM masks.** SAM tends to segment the most salient object in the box; for a
@@ -153,7 +153,7 @@ tells us how much survives, and Phase 0 has earned a Phase 1.
 
 ## Optional Phase 1 — lightweight MedSAM fine-tune (only if Phase 0's domain gap is the blocker)
 
-If Phase 0 shows MedSAM masks are good in shape but systematically off on dental X-ray (a domain gap,
+If Phase 0 shows MedSAM masks are good in shape but systematically off on dental photos (a domain gap,
 not a localization failure), fine-tune **only the mask decoder** (or LoRA adapters) on the train split
 with (box prompt → GT mask) pairs. Encoder frozen, cheap, small-data-safe. Re-run the Phase-0 eval.
 This is the *only* training step in the whole plan, and it is conditional on Phase 0.

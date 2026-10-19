@@ -5,7 +5,7 @@ Guidance for working in this repository.
 ## Project overview
 
 YOLOv8 **instance segmentation** for the Kaggle competition *AlphaDent: Teeth Marking* —
-detect and segment dental findings (Caries 1–6, Crown, Abrasion, etc.) on panoramic X-rays.
+detect and segment dental findings (Caries 1–6, Crown, Abrasion, etc.) on intraoral dental photographs.
 The development metric that matters is **Mask mAP50-95** (`metrics/mAP50-95(M)` in the CSVs).
 
 Current best **submission**: **V6+V10 ensemble + multi-view TTA (hflip+vflip+multi-scale 640/896) →
@@ -377,7 +377,7 @@ Not in git (see `.gitignore`): datasets, images, `*.pt` weights, `runs/`.
 - **New research note `docs/medsam_refine_research_notes.md`**: motivation (YOLO proto masks are
   coarse at `imgsz/4`; mAP50-95 is IoU-strict), the V6+MedSAM pipeline (no scorer/instance-split to
   train — reuse V6 conf), Phase 0 = zero-training mask swap, pre-registered eval (headline = large
-  classes), risks (MedSAM domain gap on dental pano X-ray; SAM segmenting the whole tooth), optional
+  classes), risks (MedSAM domain gap on dental photographs; SAM segmenting the whole tooth), optional
   Phase 1 = decoder-only/LoRA fine-tune *only if* Phase 0's domain gap blocks it.
 - **`src/07-medsam-mask-refine.ipynb` BUILT (23 cells, eval-only, Kaggle-self-contained; built via a
   one-off `tools/_build_src07.py`, deleted; all 11 code cells compile).** Inputs: `version6_best.pt`

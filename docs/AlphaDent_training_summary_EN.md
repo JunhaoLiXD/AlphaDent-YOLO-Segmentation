@@ -606,7 +606,7 @@ next step must change the **training input** (crop / tile-based training), not t
 | Item | Setting |
 |---|---|
 | Model | stock `yolov8s-seg.pt` (the V12 P2 head is reverted) |
-| Training input | **tiles** — each panoramic image sliced into overlapping tiles |
+| Training input | **tiles** — each dental photo sliced into overlapping tiles |
 | Tile size | 640 px (also the training `imgsz`, so a tile is fed ~1:1) |
 | Overlap | 0.20 |
 | Empty-tile keep ratio (train) | 0.15 (val keeps all tiles) |
@@ -619,7 +619,7 @@ next step must change the **training input** (crop / tile-based training), not t
 ### Why this setting was used
 
 V12 proved the bottleneck is the **full-image input**, not the detection head: a tiny lesion
-is only a few pixels after a panoramic image is downscaled to 768, so even a high-resolution
+is only a few pixels after a full dental photo is downscaled to 768, so even a high-resolution
 P2 head had no signal to work with (recall did not improve). V13 changes the input instead of
 the network: by training on tiles, a lesion that was ~5 px in the full image becomes ~20–40 px
 in a tile, giving the model enough pixels to learn a fine-grained mask. The tiled input is the
@@ -918,7 +918,7 @@ branch). A lower-effort alternative experiment that does not touch the large cla
 ### Why the original "crop training" direction was attractive (and why it backfired)
 
 The error analysis after V6 identified that approximately 78% of validation objects occupied less than 1% of the image area.  
-Training on full panoramic images means that tiny Caries regions are extremely small relative to the model input, which is why crop/tile training looked promising.
+Training on full dental photos means that tiny Caries regions are extremely small relative to the model input, which is why crop/tile training looked promising.
 
 V13 showed the flaw: tiling does make tiny lesions larger relative to the input, but it
 **simultaneously breaks the large objects** (clipped out of training by `MIN_AREA_FRAC`,
